@@ -18,12 +18,15 @@ A modern, enterprise-ready HRMS platform built with Next.js and Supabase. Featur
 - Branch-wise details on selected dates
 - Manpower and salary information
 
-### 3. **Notice Generator** (Dynamic Database)
-- Create custom form/table structures
-- Define fields with multiple data types (text, number, date, boolean)
-- Excel import functionality
-- CRUD operations for record management
-- Data export to Excel
+### 3. **Notice Builder** (Dynamic Form Builder & Data Management)
+- Define custom table schemas using a simple `column_name:datatype` syntax
+- Supported data types: `text`, `number`, `date`, `boolean`
+- Creates real PostgreSQL tables in Supabase via secure RPC functions
+- Auto-generates entry forms from the table schema
+- Live data preview table that refreshes after each insert
+- Excel/CSV import with column validation and bulk insert
+- Registry of all created tables for easy access
+- Modular component architecture under `components/notice/`
 
 ### 4. **Compliance Submission**
 - Support for multiple compliance types (PF, ESIC, PT, TDS, ESI, Gratuity)
@@ -39,6 +42,7 @@ A modern, enterprise-ready HRMS platform built with Next.js and Supabase. Featur
 - **Components**: shadcn/ui
 - **Backend**: Supabase (PostgreSQL)
 - **Charts**: Recharts
+- **Excel Handling**: xlsx library for client-side parsing
 - **Authentication**: Demo credentials (can be extended to Supabase Auth)
 
 ## Environment Variables
@@ -48,25 +52,41 @@ Create a `.env.local` file with:
 ```
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
 ```
 
+The `SUPABASE_SERVICE_ROLE_KEY` is required for the Notice Builder API route, which needs elevated privileges to create tables and execute RPC functions.
+
 ## Database Setup
+
+### Core Tables
 
 1. Go to your Supabase project
 2. Copy the SQL from `/scripts/init-database.sql`
 3. Paste it into the SQL Editor in Supabase
 4. Execute the script to create all tables and insert sample data
 
-The schema includes:
+The core schema includes:
 - `companies` - Organization records
 - `branches` - Company branches
 - `employees` - Employee records
 - `calendar_events` - Company events and holidays
 - `leave_types` and `leave_records` - Leave management
-- `dynamic_tables_metadata` - Custom form definitions
-- `dynamic_table_data` - Custom form data storage
 - `compliance_submissions` - Compliance tracking
 - `license_status` - License and compliance status
+
+### Notice Builder Setup
+
+Run `/scripts/notice-setup.sql` in the Supabase SQL Editor. This creates:
+
+- `notice_tables_registry` - Tracks all user-created tables with their column definitions
+- `create_notice_table(p_table_name, p_columns)` - RPC function to create dynamic PostgreSQL tables
+- `check_table_exists(p_table_name)` - RPC function to check if a table already exists
+- `get_notice_table_data(p_table_name)` - RPC function to fetch all rows from a dynamic table
+- `insert_notice_row(p_table_name, p_data)` - RPC function to insert a single row
+- `bulk_insert_notice_rows(p_table_name, p_rows)` - RPC function to bulk insert rows from Excel/CSV import
+
+All RPC functions use `SECURITY DEFINER` and safe identifier quoting via `format(%I)` to prevent SQL injection. The `create_notice_table` function also sends `NOTIFY pgrst, 'reload schema'` so PostgREST immediately recognizes new tables.
 
 ## Usage
 
@@ -78,8 +98,91 @@ The schema includes:
 ### Navigation
 - **Dashboard Tab**: View HR summaries and statistics
 - **Calendar Tab**: Browse company events and holidays
-- **Notice Generator**: Create custom forms and manage data
+- **Notice Builder**: Create custom forms, manage data, import from Excel/CSV
 - **Compliance Tab**: Submit and track compliance requirements
+
+### Notice Builder Workflow
+
+1. **Define Fields**: Enter field definitions in the textarea, one per line (e.g. `emp_id:text`, `notice_date:date`, `reason:text`)
+2. **Apply Fields**: Click "Apply Fields" to validate and parse the definitions
+3. **Review & Create**: Review the fields table, enter a table name and display name, then click "Create Form / Table"
+4. **Fill the Form**: The auto-generated form appears on the right. Fill in values and submit to insert rows
+5. **View Data**: The data preview table below the form shows all inserted rows
+6. **Import Data**: Switch to the "Import Data" tab to bulk import from Excel or CSV files
+
+## Project Structure
+
+```
+/app
+  /login              - Authentication page
+  /dashboard          - Main HRMS dashboard
+    /notice/page.tsx  - Notice Builder page
+  /api
+    /notice/route.ts  - Notice Builder API (create-table, insert-row, bulk-insert)
+    /calendar/        - Calendar API
+    /compliance/      - Compliance API
+    /employees/       - Employees API
+    /branches/        - Branches API
+    /companies/       - Companies API
+    /leaves/          - Leaves API
+    /licenses/        - Licenses API
+
+/components
+  /notice
+    /notice-builder.tsx    - Main orchestrator (tabs, state coordination)
+    /field-definition.tsx  - Bulk field input with validation
+    /fields-table.tsx      - Fields display table + table creation
+    /dynamic-form.tsx      - Auto-generated form from schema
+    /data-preview.tsx      - Inserted data table with refresh
+    /excel-import.tsx      - Excel/CSV import with column validation
+  /calendar-view.tsx       - Calendar component
+  /compliance-submission.tsx - Compliance management
+  /dashboard-sidebar.tsx   - Navigation sidebar
+  /dashboard-header.tsx    - Header with user info
+  /company-context.tsx     - Company context provider
+  /ui                      - shadcn/ui components
+
+/lib
+  /supabase.ts    - Supabase client configuration
+  /api-client.ts  - REST API client wrapper
+  /auth-context.tsx - Authentication context
+  /utils.ts       - Utility functions
+
+/scripts
+  /init-database.sql   - Core database schema and sample data
+  /notice-setup.sql    - Notice Builder tables and RPC functions
+```
+
+## API Endpoints
+
+### Notice Builder API (`/api/notice`)
+
+| Method | Parameters | Description |
+|--------|-----------|-------------|
+| GET | `?action=tables` | List all tables from the registry |
+| GET | `?action=data&table=<name>` | Fetch all rows from a dynamic table |
+| GET | `?action=columns&table=<name>` | Get column definitions for a table |
+| POST | `{action: "create-table", tableName, displayName, columns}` | Create a new table and register it |
+| POST | `{action: "insert-row", tableName, data}` | Insert a single row |
+| POST | `{action: "bulk-insert", tableName, rows}` | Bulk insert rows (from Excel/CSV) |
+
+### Other APIs (via Supabase)
+
+- GET/POST `/api/dashboard` - Dashboard statistics
+- GET/POST `/api/employees` - Employee management
+- GET/POST `/api/branches` - Branch management
+- GET/POST `/api/calendar` - Calendar events
+- GET/POST/PATCH `/api/compliance` - Compliance submissions
+- GET/POST/PATCH `/api/leaves` - Leave management
+- GET/POST/PATCH `/api/licenses` - License management
+
+## Security
+
+- Row Level Security (RLS) policies configured in Supabase
+- Session-based authentication
+- Company-scoped data access
+- Service role key used only in server-side API routes (never exposed to client)
+- RPC functions use `SECURITY DEFINER` with safe identifier quoting to prevent SQL injection
 
 ## Color Theme
 
@@ -88,75 +191,6 @@ The application uses a light blue color palette:
 - Secondary: `#06b6d4` (Cyan)
 - Background: Light blue-50
 - Text: Dark blue-900
-
-## Project Structure
-
-```
-/app
-  /login - Authentication page
-  /dashboard - Main HRMS dashboard with all features
-  /layout.tsx - Root layout
-  /page.tsx - Home redirect
-
-/components
-  /calendar-view.tsx - Calendar component
-  /notice-generator.tsx - Dynamic form builder
-  /compliance-submission.tsx - Compliance management
-  /ui - shadcn UI components
-
-/lib
-  /supabase.ts - Supabase client configuration
-
-/scripts
-  /init-database.sql - Database schema and sample data
-```
-
-## Features Details
-
-### Dashboard Statistics
-- Total employees count
-- Gender distribution (Male/Female pie chart)
-- Branch-wise manpower comparison
-- Total salary overview
-- License status indicators
-
-### Calendar Features
-- Interactive calendar with event indicators
-- Click to view event details
-- Branch information panel
-- Manpower and salary summary per branch
-
-### Notice Generator
-- Step 1: Define form structure with multiple field types
-- Step 2: Auto-generate database table in Supabase
-- Step 3: Import data from Excel files
-- Step 4: Full CRUD operations on form data
-- Step 5: Export to Excel for analysis
-
-### Compliance Module
-- Select compliance type (PF, ESIC, PT, TDS, ESI, Gratuity)
-- Choose submission month
-- Select multiple branches
-- View submission status
-- Generate and print PDF reports
-- Export all submissions to Excel
-
-## API Endpoints (via Supabase)
-
-All data operations use Supabase's REST API:
-- GET `/rest/v1/companies`
-- GET `/rest/v1/branches`
-- GET `/rest/v1/employees`
-- GET `/rest/v1/calendar_events`
-- POST/GET/UPDATE/DELETE `/rest/v1/compliance_submissions`
-- POST/GET/UPDATE/DELETE `/rest/v1/dynamic_table_data`
-
-## Security
-
-- Row Level Security (RLS) policies configured in Supabase
-- Session-based authentication
-- Company-scoped data access
-- Branch-specific permissions
 
 ## Future Enhancements
 
@@ -170,8 +204,8 @@ All data operations use Supabase's REST API:
 ## Support
 
 For issues or feature requests, please check the console logs and verify:
-1. Supabase credentials are correctly configured
-2. Database schema is properly initialized
+1. Supabase credentials are correctly configured (including `SUPABASE_SERVICE_ROLE_KEY`)
+2. Database schema is properly initialized (both `init-database.sql` and `notice-setup.sql`)
 3. Network connectivity to Supabase
 4. Browser console for error messages
 

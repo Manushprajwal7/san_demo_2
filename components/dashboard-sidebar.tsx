@@ -45,7 +45,7 @@ const NAV_ITEMS: NavItem[] = [
     roles: [],
   },
   {
-    label: "Notice Generator",
+    label: "Notice Builder",
     href: "/dashboard/notice",
     icon: ClipboardList,
     roles: [],
