@@ -81,16 +81,6 @@ export const complianceAPI = {
   updateSubmission: (id: string, status: string) => apiClient.patch('/compliance', { id, status }),
 }
 
-// Dynamic tables endpoints
-export const dynamicTablesAPI = {
-  getTables: (company: string, tableId?: string) =>
-    apiClient.get(`/dynamic-tables?company=${company}${tableId ? `&tableId=${tableId}` : ''}`),
-  createTable: (data: any) => apiClient.post('/dynamic-tables', { type: 'table', data }),
-  createData: (data: any) => apiClient.post('/dynamic-tables', { type: 'data', data }),
-  updateData: (id: string, data: any) => apiClient.patch('/dynamic-tables', { id, data }),
-  deleteData: (id: string) => apiClient.delete(`/dynamic-tables?id=${id}`),
-}
-
 // Leaves endpoints
 export const leavesAPI = {
   getLeaveTypes: (company: string) => apiClient.get(`/leaves?company=${company}&type=types`),
