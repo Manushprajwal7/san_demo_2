@@ -6,6 +6,11 @@ import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import {
+  downloadCompliancePDF,
+  previewCompliancePDF,
+} from "@/lib/pdf-generator";
+import { FileDown, Eye } from "lucide-react";
 
 interface Compliance {
   id: string;
@@ -83,6 +88,38 @@ export default function CompliancePage() {
     useState<Compliance | null>(null);
   const [showUploadForm, setShowUploadForm] = useState(false);
 
+  const handleExportPDF = (compliance: Compliance, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the modal
+
+    const pdfData = {
+      id: compliance.id,
+      state: "Karnataka", // You can make this dynamic
+      district: "Bangalore Urban",
+      taluk: "Bangalore North",
+      employee: "System User",
+      forms: [compliance.name],
+      submittedAt: compliance.submittedOn || new Date().toISOString(),
+    };
+
+    downloadCompliancePDF(pdfData);
+  };
+
+  const handlePreviewPDF = (compliance: Compliance, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent opening the modal
+
+    const pdfData = {
+      id: compliance.id,
+      state: "Karnataka",
+      district: "Bangalore Urban",
+      taluk: "Bangalore North",
+      employee: "System User",
+      forms: [compliance.name],
+      submittedAt: compliance.submittedOn || new Date().toISOString(),
+    };
+
+    previewCompliancePDF(pdfData);
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
@@ -144,7 +181,12 @@ export default function CompliancePage() {
                 Track and manage regulatory compliance submissions
               </p>
             </div>
-            <Button className="bg-gray-700 hover:bg-gray-800 text-white">
+            <Button
+              className="bg-gray-700 hover:bg-gray-800 text-white"
+              onClick={() =>
+                (window.location.href = "/dashboard/compliance/new")
+              }
+            >
               New Compliance
             </Button>
           </div>
@@ -188,7 +230,7 @@ export default function CompliancePage() {
                   <div
                     key={compliance.id}
                     className={`p-6 ${getStatusColor(
-                      compliance.status
+                      compliance.status,
                     )} cursor-pointer hover:opacity-90 transition-opacity`}
                     onClick={() => setSelectedCompliance(compliance)}
                   >
@@ -200,7 +242,7 @@ export default function CompliancePage() {
                           </h3>
                           <span
                             className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(
-                              compliance.status
+                              compliance.status,
                             )}`}
                           >
                             {compliance.status.charAt(0).toUpperCase() +
@@ -256,6 +298,26 @@ export default function CompliancePage() {
                           )}
                         </div>
                       </div>
+
+                      {/* PDF Export Buttons */}
+                      <div className="flex gap-2 ml-4">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => handlePreviewPDF(compliance, e)}
+                          className="hover:bg-white/50"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={(e) => handleExportPDF(compliance, e)}
+                          className="hover:bg-white/50"
+                        >
+                          <FileDown className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -275,7 +337,7 @@ export default function CompliancePage() {
                       </h2>
                       <span
                         className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold mt-2 ${getStatusBadge(
-                          selectedCompliance.status
+                          selectedCompliance.status,
                         )}`}
                       >
                         {selectedCompliance.status.charAt(0).toUpperCase() +

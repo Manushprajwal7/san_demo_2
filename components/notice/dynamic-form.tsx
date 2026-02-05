@@ -27,9 +27,8 @@ export function DynamicForm({
     return data;
   };
 
-  const [formData, setFormData] = useState<Record<string, string | boolean>>(
-    buildInitialData
-  );
+  const [formData, setFormData] =
+    useState<Record<string, string | boolean>>(buildInitialData);
   const [submitting, setSubmitting] = useState(false);
 
   const handleChange = (name: string, value: string | boolean) => {
@@ -83,12 +82,18 @@ export function DynamicForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {columns.map((col) => (
-          <div key={col.name}>
-            <Label htmlFor={`form-${col.name}`} className="text-sm font-medium capitalize">
+          <div key={col.name} className="space-y-2">
+            <Label
+              htmlFor={`form-${col.name}`}
+              className="text-sm font-medium capitalize text-foreground"
+            >
               {col.name.replace(/_/g, " ")}
+              <span className="text-muted-foreground text-xs font-normal ml-2">
+                ({col.type})
+              </span>
             </Label>
 
             {col.type === "boolean" ? (
@@ -96,11 +101,9 @@ export function DynamicForm({
                 <Switch
                   id={`form-${col.name}`}
                   checked={formData[col.name] as boolean}
-                  onCheckedChange={(checked) =>
-                    handleChange(col.name, checked)
-                  }
+                  onCheckedChange={(checked) => handleChange(col.name, checked)}
                 />
-                <span className="text-sm text-gray-600">
+                <span className="text-sm text-muted-foreground">
                   {formData[col.name] ? "Yes" : "No"}
                 </span>
               </div>
@@ -116,16 +119,20 @@ export function DynamicForm({
                 }
                 value={formData[col.name] as string}
                 onChange={(e) => handleChange(col.name, e.target.value)}
-                className="mt-1"
                 step={col.type === "number" ? "any" : undefined}
+                placeholder={`Enter ${col.name.replace(/_/g, " ")} (optional)`}
               />
             )}
           </div>
         ))}
       </div>
 
-      <Button type="submit" disabled={submitting} className="w-full">
-        {submitting ? "Saving..." : "Submit"}
+      <Button
+        type="submit"
+        disabled={submitting}
+        className="w-full font-medium"
+      >
+        {submitting ? "Saving..." : "Submit Entry"}
       </Button>
     </form>
   );

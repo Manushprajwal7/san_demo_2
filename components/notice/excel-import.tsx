@@ -79,78 +79,125 @@ export function ExcelImport() {
         const workbook = XLSX.read(data, { type: "array" });
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(
-          sheet
-        );
+        const jsonData =
+          XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
 
         if (jsonData.length === 0) {
           setErrors(["The file is empty or has no data rows."]);
           return;
         }
 
-        // Validate column names
+        // Normalize column names: lowercase, replace spaces/dots with underscores
+        const normalizeColumnName = (name: string): string => {
+          return name
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, "_")
+            .replace(/\./g, "_")
+            .replace(/_+/g, "_");
+        };
+
+        // Get file columns and create mapping
         const fileColumns = Object.keys(jsonData[0]);
-        const missing = expectedColumns.filter(
-          (c) => !fileColumns.includes(c)
-        );
-        const extra = fileColumns.filter(
-          (c) => !expectedColumns.includes(c)
-        );
+        const columnMapping = new Map<string, string>();
 
-        const validationErrors: string[] = [];
+        // Map file columns to expected columns
+        expectedColumns.forEach((expectedCol) => {
+          const normalizedExpected = normalizeColumnName(expectedCol);
+          const matchingFileCol = fileColumns.find(
+            (fileCol) => normalizeColumnName(fileCol) === normalizedExpected,
+          );
+          if (matchingFileCol) {
+            columnMapping.set(expectedCol, matchingFileCol);
+          }
+        });
+
+        // Check for missing columns
+        const missing = expectedColumns.filter((c) => !columnMapping.has(c));
+        const mapped = expectedColumns.filter((c) => columnMapping.has(c));
+
+        const validationWarnings: string[] = [];
 
         if (missing.length > 0) {
-          validationErrors.push(
-            `Missing columns: ${missing.join(", ")}`
+          validationWarnings.push(
+            `⚠️ Missing columns (will be set to NULL): ${missing.join(", ")}`,
           );
         }
 
-        if (extra.length > 0) {
-          validationErrors.push(
-            `Extra columns (will be ignored): ${extra.join(", ")}`
-          );
+        if (mapped.length > 0) {
+          validationWarnings.push(`✅ Mapped columns: ${mapped.join(", ")}`);
         }
 
-        if (missing.length > 0) {
-          setErrors(validationErrors);
-          return;
+        // Show extra columns in file that won't be imported
+        const extraColumns = fileColumns.filter(
+          (fileCol) =>
+            !expectedColumns.some(
+              (expectedCol) =>
+                normalizeColumnName(fileCol) ===
+                normalizeColumnName(expectedCol),
+            ),
+        );
+
+        if (extraColumns.length > 0) {
+          validationWarnings.push(
+            `ℹ️ Extra columns in file (will be ignored): ${extraColumns.join(", ")}`,
+          );
         }
 
         // Filter rows to only include expected columns and validate types
         const cleanedRows = jsonData.map((row) => {
           const cleaned: Record<string, unknown> = {};
           tableInfo.columns.forEach((col) => {
-            const val = row[col.name];
+            const fileColName = columnMapping.get(col.name);
+            const val = fileColName ? row[fileColName] : undefined;
+
+            // Handle empty values
+            if (val === undefined || val === null || val === "") {
+              cleaned[col.name] = null;
+              return;
+            }
+
+            // Type conversion
             if (col.type === "number") {
-              cleaned[col.name] =
-                val === undefined || val === null || val === ""
-                  ? null
-                  : Number(val);
+              const numVal = Number(val);
+              cleaned[col.name] = isNaN(numVal) ? null : numVal;
             } else if (col.type === "boolean") {
               if (typeof val === "boolean") {
                 cleaned[col.name] = val;
               } else if (typeof val === "string") {
                 cleaned[col.name] = ["true", "yes", "1"].includes(
-                  val.toLowerCase()
+                  val.toLowerCase(),
                 );
               } else {
                 cleaned[col.name] = Boolean(val);
               }
+            } else if (col.type === "date") {
+              // Handle date values
+              if (typeof val === "number") {
+                // Excel date serial number
+                const date = XLSX.SSF.parse_date_code(val);
+                cleaned[col.name] =
+                  `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
+              } else {
+                cleaned[col.name] = String(val);
+              }
             } else {
-              cleaned[col.name] =
-                val === undefined || val === null ? null : String(val);
+              cleaned[col.name] = String(val);
             }
           });
           return cleaned;
         });
 
-        if (validationErrors.length > 0) {
-          setErrors(validationErrors);
+        if (validationWarnings.length > 0) {
+          setErrors(validationWarnings);
         }
 
         setParsedRows(cleanedRows);
-      } catch {
-        setErrors(["Failed to parse file. Ensure it is a valid Excel or CSV file."]);
+        toast.success(`Parsed ${cleanedRows.length} rows successfully`);
+      } catch (err) {
+        setErrors([
+          `Failed to parse file: ${err instanceof Error ? err.message : "Unknown error"}`,
+        ]);
       }
     };
 
@@ -183,7 +230,7 @@ export function ExcelImport() {
 
       setResult(data);
       toast.success(
-        `Import complete: ${data.inserted} inserted, ${data.failed} failed.`
+        `Import complete: ${data.inserted} inserted, ${data.failed} failed.`,
       );
       setParsedRows([]);
       setFileName("");
@@ -200,19 +247,24 @@ export function ExcelImport() {
   return (
     <div className="space-y-6">
       {/* Step 1: Select target table */}
-      <div>
-        <Label className="text-sm font-medium">1. Select Target Table</Label>
-        <Select value={selectedTable} onValueChange={(val) => {
-          setSelectedTable(val);
-          setParsedRows([]);
-          setErrors([]);
-          setResult(null);
-          setFileName("");
-          if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-          }
-        }}>
-          <SelectTrigger className="mt-1">
+      <div className="space-y-3">
+        <Label className="text-sm font-medium text-foreground">
+          1. Select Target Table
+        </Label>
+        <Select
+          value={selectedTable}
+          onValueChange={(val) => {
+            setSelectedTable(val);
+            setParsedRows([]);
+            setErrors([]);
+            setResult(null);
+            setFileName("");
+            if (fileInputRef.current) {
+              fileInputRef.current.value = "";
+            }
+          }}
+        >
+          <SelectTrigger>
             <SelectValue placeholder="Choose a table..." />
           </SelectTrigger>
           <SelectContent>
@@ -224,7 +276,7 @@ export function ExcelImport() {
           </SelectContent>
         </Select>
         {tables.length === 0 && (
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground">
             No tables found. Create a table first in the Form Builder tab.
           </p>
         )}
@@ -232,17 +284,21 @@ export function ExcelImport() {
 
       {/* Step 2: Upload file */}
       {selectedTable && (
-        <div>
-          <Label className="text-sm font-medium">
+        <div className="space-y-3">
+          <Label className="text-sm font-medium text-foreground">
             2. Upload Excel / CSV File
           </Label>
-          <p className="text-xs text-gray-500 mt-1 mb-2">
-            File columns must match:{" "}
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Column names will be matched automatically (case-insensitive).
+            Missing columns will be set to NULL.
+          </p>
+          <p className="text-xs text-muted-foreground font-mono bg-muted p-3 rounded-md">
+            Expected columns:{" "}
             {getSelectedTableInfo()
               ?.columns.map((c) => c.name)
               .join(", ")}
           </p>
-          <div className="flex items-center gap-3 mt-1">
+          <div className="flex items-center gap-3">
             <Input
               ref={fileInputRef}
               type="file"
@@ -250,22 +306,22 @@ export function ExcelImport() {
               onChange={handleFileChange}
               className="flex-1"
             />
-            <Upload size={18} className="text-gray-400" />
+            <Upload size={20} className="text-muted-foreground" />
           </div>
           {fileName && (
-            <p className="text-xs text-gray-600 mt-1">
-              File: {fileName}
-            </p>
+            <p className="text-sm text-foreground font-medium">📄 {fileName}</p>
           )}
         </div>
       )}
 
-      {/* Validation errors */}
+      {/* Validation warnings */}
       {errors.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-          <ul className="text-sm text-red-600 space-y-1">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <ul className="text-sm text-amber-800 space-y-1.5">
             {errors.map((err, i) => (
-              <li key={i}>• {err}</li>
+              <li key={i} className="leading-relaxed">
+                {err}
+              </li>
             ))}
           </ul>
         </div>
@@ -273,39 +329,41 @@ export function ExcelImport() {
 
       {/* Step 3: Preview & Import */}
       {parsedRows.length > 0 && (
-        <div>
-          <p className="text-sm text-gray-700 mb-3">
-            <strong>{parsedRows.length}</strong> rows parsed and ready to
-            import.
-          </p>
+        <div className="space-y-4">
+          <div className="bg-primary/5 border border-primary/20 rounded-lg p-4">
+            <p className="text-sm text-foreground">
+              <span className="font-semibold text-primary">
+                {parsedRows.length}
+              </span>{" "}
+              rows parsed and ready to import
+            </p>
+          </div>
           <Button
             onClick={handleImport}
             disabled={importing}
-            className="w-full"
+            className="w-full font-medium"
           >
-            {importing
-              ? "Importing..."
-              : `Import ${parsedRows.length} Rows`}
+            {importing ? "Importing..." : `Import ${parsedRows.length} Rows`}
           </Button>
         </div>
       )}
 
       {/* Step 4: Results */}
       {result && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-          <h4 className="font-medium text-green-800 mb-2">Import Results</h4>
-          <div className="flex gap-6 text-sm">
+        <div className="bg-green-50 border border-green-200 rounded-lg p-5">
+          <h4 className="font-semibold text-green-900 mb-3">Import Results</h4>
+          <div className="flex gap-8 text-sm">
             <div>
-              <span className="text-green-700 font-semibold">
+              <span className="text-2xl font-bold text-green-700">
                 {result.inserted}
-              </span>{" "}
-              <span className="text-green-600">rows inserted</span>
+              </span>
+              <p className="text-green-600 mt-1">rows inserted</p>
             </div>
             <div>
-              <span className="text-red-700 font-semibold">
+              <span className="text-2xl font-bold text-red-700">
                 {result.failed}
-              </span>{" "}
-              <span className="text-red-600">rows failed</span>
+              </span>
+              <p className="text-red-600 mt-1">rows failed</p>
             </div>
           </div>
         </div>

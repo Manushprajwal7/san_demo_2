@@ -38,7 +38,7 @@ export function FieldDefinition({ onFieldsParsed }: FieldDefinitionProps) {
       const parts = line.split(":");
       if (parts.length !== 2) {
         newErrors.push(
-          `Line ${idx + 1}: "${line}" — expected format column_name:datatype`
+          `Line ${idx + 1}: "${line}" — expected format column_name:datatype`,
         );
         return;
       }
@@ -53,14 +53,14 @@ export function FieldDefinition({ onFieldsParsed }: FieldDefinitionProps) {
 
       if (!/^[a-z_][a-z0-9_]*$/.test(name)) {
         newErrors.push(
-          `Line ${idx + 1}: "${name}" — column name must start with a letter or underscore and contain only letters, numbers, underscores`
+          `Line ${idx + 1}: "${name}" — column name must start with a letter or underscore and contain only letters, numbers, underscores`,
         );
         return;
       }
 
       if (!SUPPORTED_TYPES.includes(type)) {
         newErrors.push(
-          `Line ${idx + 1}: "${type}" — unsupported type. Use: ${SUPPORTED_TYPES.join(", ")}`
+          `Line ${idx + 1}: "${type}" — unsupported type. Use: ${SUPPORTED_TYPES.join(", ")}`,
         );
         return;
       }
@@ -81,45 +81,52 @@ export function FieldDefinition({ onFieldsParsed }: FieldDefinitionProps) {
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <Label htmlFor="field-input" className="text-sm font-medium">
+    <div className="space-y-5">
+      <div className="space-y-3">
+        <Label
+          htmlFor="field-input"
+          className="text-sm font-medium text-foreground"
+        >
           Define Fields
         </Label>
-        <p className="text-xs text-gray-500 mt-1 mb-2">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           Enter one field per line in the format:{" "}
-          <code className="bg-gray-100 px-1 py-0.5 rounded">
+          <code className="bg-muted px-2 py-0.5 rounded text-xs font-mono">
             column_name:datatype
           </code>
         </p>
-        <p className="text-xs text-gray-500 mb-2">
-          Supported types: <strong>text</strong>, <strong>number</strong>,{" "}
-          <strong>date</strong>, <strong>boolean</strong>
+        <p className="text-sm text-muted-foreground">
+          Supported types: <span className="font-medium">text</span>,{" "}
+          <span className="font-medium">number</span>,{" "}
+          <span className="font-medium">date</span>,{" "}
+          <span className="font-medium">boolean</span>
         </p>
         <Textarea
           id="field-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={`emp_id:text\nnotice_date:date\nreason:text\nis_approved:boolean`}
-          rows={6}
-          className="font-mono text-sm"
+          rows={7}
+          className="font-mono text-sm resize-none"
         />
       </div>
 
       {errors.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-          <p className="text-sm font-medium text-red-800 mb-1">
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-4">
+          <p className="text-sm font-semibold text-destructive mb-2">
             Validation Errors:
           </p>
-          <ul className="text-sm text-red-600 space-y-1">
+          <ul className="text-sm text-destructive/90 space-y-1.5">
             {errors.map((err, i) => (
-              <li key={i}>• {err}</li>
+              <li key={i} className="leading-relaxed">
+                • {err}
+              </li>
             ))}
           </ul>
         </div>
       )}
 
-      <Button onClick={handleApply} className="w-full">
+      <Button onClick={handleApply} className="w-full font-medium">
         Apply Fields
       </Button>
     </div>

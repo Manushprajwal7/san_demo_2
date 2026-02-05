@@ -90,42 +90,51 @@ export function FieldsTable({
   }
 
   return (
-    <div className="space-y-4">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Column Name</TableHead>
-            <TableHead>Datatype</TableHead>
-            <TableHead className="w-16">Remove</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {fields.map((field, idx) => (
-            <TableRow key={idx}>
-              <TableCell className="font-mono text-sm">{field.name}</TableCell>
-              <TableCell>
-                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-                  {field.type}
-                </span>
-              </TableCell>
-              <TableCell>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onRemoveField(idx)}
-                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                >
-                  <Trash2 size={14} />
-                </Button>
-              </TableCell>
+    <div className="space-y-6">
+      <div className="border border-border rounded-lg overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/50">
+              <TableHead className="font-semibold">Column Name</TableHead>
+              <TableHead className="font-semibold">Datatype</TableHead>
+              <TableHead className="w-20 text-center font-semibold">
+                Remove
+              </TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {fields.map((field, idx) => (
+              <TableRow key={idx}>
+                <TableCell className="font-mono text-sm font-medium">
+                  {field.name}
+                </TableCell>
+                <TableCell>
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary">
+                    {field.type}
+                  </span>
+                </TableCell>
+                <TableCell className="text-center">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => onRemoveField(idx)}
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 size={16} />
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <Label htmlFor="table-name" className="text-sm font-medium">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="space-y-2">
+          <Label
+            htmlFor="table-name"
+            className="text-sm font-medium text-foreground"
+          >
             Table Name
           </Label>
           <Input
@@ -133,14 +142,16 @@ export function FieldsTable({
             value={tableName}
             onChange={(e) => setTableName(e.target.value)}
             placeholder="e.g. employee_notices"
-            className="mt-1"
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             Lowercase, underscores only. Used as the database table name.
           </p>
         </div>
-        <div>
-          <Label htmlFor="display-name" className="text-sm font-medium">
+        <div className="space-y-2">
+          <Label
+            htmlFor="display-name"
+            className="text-sm font-medium text-foreground"
+          >
             Display Name
           </Label>
           <Input
@@ -148,21 +159,24 @@ export function FieldsTable({
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="e.g. Employee Notices"
-            className="mt-1"
           />
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-muted-foreground leading-relaxed">
             Human-readable name shown in the UI.
           </p>
         </div>
       </div>
 
       {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3">
+        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-lg p-4">
           {error}
-        </p>
+        </div>
       )}
 
-      <Button onClick={handleCreate} disabled={loading} className="w-full">
+      <Button
+        onClick={handleCreate}
+        disabled={loading}
+        className="w-full font-medium"
+      >
         {loading ? "Creating..." : "Create Form / Table"}
       </Button>
     </div>

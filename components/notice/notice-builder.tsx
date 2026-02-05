@@ -16,6 +16,7 @@ import { FieldsTable } from "./fields-table";
 import { DynamicForm } from "./dynamic-form";
 import { DataPreview } from "./data-preview";
 import { ExcelImport } from "./excel-import";
+import { DataViewer } from "./data-viewer";
 
 interface TableInfo {
   id: string;
@@ -83,66 +84,70 @@ export function NoticeBuilder() {
 
   return (
     <div className="space-y-6">
-      <Tabs defaultValue="builder">
-        <TabsList>
-          <TabsTrigger value="builder">Form Builder</TabsTrigger>
-          <TabsTrigger value="import">Import Data</TabsTrigger>
+      <Tabs defaultValue="builder" className="w-full">
+        <TabsList className="grid w-full max-w-2xl grid-cols-3 h-11">
+          <TabsTrigger value="builder" className="text-sm font-semibold">
+            Form Builder
+          </TabsTrigger>
+          <TabsTrigger value="import" className="text-sm font-semibold">
+            Import Data
+          </TabsTrigger>
+          <TabsTrigger value="view" className="text-sm font-semibold">
+            View Data
+          </TabsTrigger>
         </TabsList>
 
         {/* Form Builder Tab */}
-        <TabsContent value="builder" className="space-y-6 mt-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Left: Define & Create */}
-            <div className="space-y-6">
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4">
+        <TabsContent value="builder" className="mt-8">
+          <div className="grid grid-cols-12 gap-6">
+            {/* Left: Define & Create - 7 columns */}
+            <div className="col-span-7 space-y-6">
+              <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-6 text-slate-900">
                   Define Fields
-                </h3>
+                </h2>
                 <FieldDefinition onFieldsParsed={handleFieldsParsed} />
               </Card>
 
-              <Card className="p-6">
-                <h3 className="text-lg font-semibold mb-4">
+              <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-6 text-slate-900">
                   Fields & Table Creation
-                </h3>
+                </h2>
                 <FieldsTable
                   fields={fields}
                   onRemoveField={handleRemoveField}
                   onTableCreated={handleTableCreated}
                 />
                 {fields.length === 0 && (
-                  <p className="text-sm text-gray-400 text-center py-4">
+                  <p className="text-sm text-slate-500 text-center py-8">
                     No fields defined yet. Use the field definition above.
                   </p>
                 )}
               </Card>
             </div>
 
-            {/* Right: Form & Data */}
-            <div className="space-y-6">
+            {/* Right: Form & Data - 5 columns */}
+            <div className="col-span-5 space-y-6">
               {/* Existing Tables Selector */}
               {tables.length > 0 && (
-                <Card className="p-6">
-                  <h3 className="text-lg font-semibold mb-4">
+                <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
+                  <h2 className="text-lg font-semibold mb-6 text-slate-900">
                     Existing Tables
-                  </h3>
-                  <div>
-                    <Label className="text-sm font-medium">
+                  </h2>
+                  <div className="space-y-3">
+                    <Label className="text-xs font-medium text-slate-600">
                       Select a table to view its form
                     </Label>
                     <Select
                       value={activeTable}
                       onValueChange={handleSelectExistingTable}
                     >
-                      <SelectTrigger className="mt-1">
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Choose a table..." />
                       </SelectTrigger>
                       <SelectContent>
                         {tables.map((t) => (
-                          <SelectItem
-                            key={t.table_name}
-                            value={t.table_name}
-                          >
+                          <SelectItem key={t.table_name} value={t.table_name}>
                             {t.display_name}
                           </SelectItem>
                         ))}
@@ -154,10 +159,10 @@ export function NoticeBuilder() {
 
               {/* Dynamic Form */}
               {activeTable && activeTableColumns.length > 0 && (
-                <Card className="p-6">
-                  <h3 className="text-lg font-semibold mb-4">
+                <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
+                  <h2 className="text-lg font-semibold mb-6 text-slate-900">
                     {activeTableDisplayName} — Entry Form
-                  </h3>
+                  </h2>
                   <DynamicForm
                     key={activeTable}
                     tableName={activeTable}
@@ -169,10 +174,10 @@ export function NoticeBuilder() {
 
               {/* Data Preview */}
               {activeTable && activeTableColumns.length > 0 && (
-                <Card className="p-6">
-                  <h3 className="text-lg font-semibold mb-4">
+                <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
+                  <h2 className="text-lg font-semibold mb-6 text-slate-900">
                     {activeTableDisplayName} — Data
-                  </h3>
+                  </h2>
                   <DataPreview
                     tableName={activeTable}
                     columns={activeTableColumns}
@@ -185,13 +190,18 @@ export function NoticeBuilder() {
         </TabsContent>
 
         {/* Import Tab */}
-        <TabsContent value="import" className="mt-6">
-          <Card className="p-6 max-w-2xl">
-            <h3 className="text-lg font-semibold mb-4">
+        <TabsContent value="import" className="mt-8">
+          <Card className="rounded-2xl bg-white p-6 max-w-3xl shadow-sm border border-slate-200">
+            <h2 className="text-lg font-semibold mb-6 text-slate-900">
               Import from Excel / CSV
-            </h3>
+            </h2>
             <ExcelImport />
           </Card>
+        </TabsContent>
+
+        {/* View Data Tab */}
+        <TabsContent value="view" className="mt-8">
+          <DataViewer />
         </TabsContent>
       </Tabs>
     </div>

@@ -10,6 +10,7 @@ import {
   Calendar,
   ClipboardList,
   ShieldCheck,
+  FileOutput,
 } from "lucide-react";
 
 interface NavItem {
@@ -56,6 +57,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: ShieldCheck,
     roles: [],
   },
+  {
+    label: "Form Generator",
+    href: "/dashboard/form-generator",
+    icon: FileOutput,
+    roles: [],
+  },
 ];
 
 export function DashboardSidebar() {
@@ -66,29 +73,30 @@ export function DashboardSidebar() {
   const visibleItems = NAV_ITEMS;
 
   return (
-    <aside className="w-48 bg-gray-50 border-r border-gray-200 min-h-screen">
-      <div className="p-4 border-b border-gray-200">
+    <aside className="w-56 bg-sidebar border-r border-sidebar-border min-h-screen">
+      <div className="p-6 border-b border-sidebar-border">
         <img
           src="/logo.png"
           alt="Company Logo"
-          className="w-full max-w-[140px] mx-auto"
+          className="w-full max-w-[160px] mx-auto"
         />
       </div>
-      <nav className="p-3 space-y-6 pt-6">
+      <nav className="p-4 space-y-2 pt-6">
         {visibleItems.map((item) => {
           const IconComponent = item.icon;
+          const isActive = pathname === item.href;
           return (
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg transition-colors text-sm ${
-                pathname === item.href
-                  ? "bg-indigo-600 text-white"
-                  : "text-gray-700 hover:bg-gray-200"
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 text-sm font-medium ${
+                isActive
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+                  : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               }`}
             >
-              <IconComponent size={18} />
-              <span className="font-medium">{item.label}</span>
+              <IconComponent size={20} strokeWidth={2} />
+              <span>{item.label}</span>
             </Link>
           );
         })}
