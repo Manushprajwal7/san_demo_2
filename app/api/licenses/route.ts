@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     }
 
     const { data, error } = await supabase
-      .from("license_status")
+      .from("branch_status")
       .select("*")
       .eq("company_id", companies.id)
       .order("created_at", { ascending: false });
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(data || []);
   } catch (error) {
-    console.error("Licenses API error:", error);
+    console.error("Branch status API error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

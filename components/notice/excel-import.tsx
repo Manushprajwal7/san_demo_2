@@ -70,45 +70,211 @@ export function ExcelImport() {
       return;
     }
 
-    const expectedColumns = tableInfo.columns.map((c) => c.name);
+    const expectedColumns = tableInfo.columns
+      .map((c) => c.name)
+      .filter((c) => !["id", "created_at", "updated_at"].includes(c));
 
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
-        const jsonData =
-          XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
+
+        const expandSheetRangeIfNeeded = () => {
+          const cellAddresses = Object.keys(sheet).filter(
+            (k) => !k.startsWith("!"),
+          );
+          if (cellAddresses.length === 0) return;
+
+          let minR = Number.POSITIVE_INFINITY;
+          let minC = Number.POSITIVE_INFINITY;
+          let maxR = 0;
+          let maxC = 0;
+
+          for (const addr of cellAddresses) {
+            const decoded = XLSX.utils.decode_cell(addr);
+            if (decoded.r < minR) minR = decoded.r;
+            if (decoded.c < minC) minC = decoded.c;
+            if (decoded.r > maxR) maxR = decoded.r;
+            if (decoded.c > maxC) maxC = decoded.c;
+          }
+
+          if (!Number.isFinite(minR) || !Number.isFinite(minC)) return;
+          sheet["!ref"] = XLSX.utils.encode_range({
+            s: { r: minR, c: minC },
+            e: { r: maxR, c: maxC },
+          });
+        };
+
+        expandSheetRangeIfNeeded();
+        const normalizeColumnName = (name: string): string =>
+          name
+            .toLowerCase()
+            .trim()
+            .replace(/[\u200B-\u200D\uFEFF]/g, "")
+            .replace(/[^a-z0-9]+/g, "_")
+            .replace(/_+/g, "_")
+            .replace(/^_+|_+$/g, "");
+
+        const expectedNormalized = expectedColumns.map(normalizeColumnName);
+
+        const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          defval: "",
+          blankrows: false,
+        });
+
+        const maxScan = Math.min(20, aoa.length);
+        let headerRowIndex = 0;
+        let bestScore = -1;
+
+        for (let i = 0; i < maxScan; i++) {
+          const row = Array.isArray(aoa[i]) ? aoa[i] : [];
+          const normalizedCells = row
+            .map((c) => normalizeColumnName(String(c ?? "")))
+            .filter(Boolean);
+
+          const score = normalizedCells.reduce((acc, cell) => {
+            return acc + (expectedNormalized.includes(cell) ? 1 : 0);
+          }, 0);
+
+          if (score > bestScore) {
+            bestScore = score;
+            headerRowIndex = i;
+          }
+        }
+
+        const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(
+          sheet,
+          {
+            defval: "",
+            range: headerRowIndex,
+            blankrows: false,
+          },
+        );
 
         if (jsonData.length === 0) {
           setErrors(["The file is empty or has no data rows."]);
           return;
         }
 
-        // Normalize column names: lowercase, replace spaces/dots with underscores
-        const normalizeColumnName = (name: string): string => {
-          return name
-            .toLowerCase()
-            .trim()
-            .replace(/\s+/g, "_")
-            .replace(/\./g, "_")
-            .replace(/_+/g, "_");
+        const parseNumber = (val: unknown): number | null => {
+          if (val === null || val === undefined || val === "") return null;
+          if (typeof val === "number") return Number.isFinite(val) ? val : null;
+          const s = String(val).trim();
+          if (!s) return null;
+          const normalized = s.replace(/[₹,\s]/g, "");
+          const num = Number(normalized);
+          return Number.isFinite(num) ? num : null;
         };
 
-        // Get file columns and create mapping
+        const parseDate = (val: unknown): string | null => {
+          if (val === null || val === undefined || val === "") return null;
+          if (val instanceof Date) return val.toISOString().slice(0, 10);
+          if (typeof val === "number") {
+            const date = XLSX.SSF.parse_date_code(val);
+            return `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
+          }
+
+          const s = String(val).trim();
+          if (!s) return null;
+
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+          const m = s.match(/^\s*(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})\s*$/);
+          if (m) {
+            const dd = Number(m[1]);
+            const mm = Number(m[2]);
+            const yyyy = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
+            if (
+              Number.isFinite(dd) &&
+              Number.isFinite(mm) &&
+              Number.isFinite(yyyy) &&
+              yyyy > 1900 &&
+              mm >= 1 &&
+              mm <= 12 &&
+              dd >= 1 &&
+              dd <= 31
+            ) {
+              return `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+            }
+          }
+
+          const d = new Date(s);
+          if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+          return s;
+        };
+
+        const getPossibleNamesForColumn = (colName: string): string[] => {
+          const n = normalizeColumnName(colName);
+          const aliases: Record<string, string[]> = {
+            empname: [
+              "empname",
+              "employee_name",
+              "emp_name",
+              "name",
+              "employee name",
+              "emp name",
+              "full_name",
+            ],
+            name: ["name", "empname", "employee_name", "emp_name"],
+            designation_name: [
+              "designation_name",
+              "designation",
+              "designation name",
+              "title",
+              "job_title",
+            ],
+            designation: ["designation", "designation_name", "title"],
+            joining_date: [
+              "joining_date",
+              "join_date",
+              "joining date",
+              "join date",
+              "date_of_joining",
+              "doj",
+            ],
+            join_date: [
+              "join_date",
+              "joining_date",
+              "join date",
+              "joining date",
+            ],
+            department: ["department", "dept", "division"],
+            employee_code: [
+              "employee_code",
+              "emp_code",
+              "employee code",
+              "emp id",
+              "emp_id",
+            ],
+            email: ["email", "e-mail", "email_address"],
+            phone: ["phone", "mobile", "contact", "phone_number"],
+            salary: ["salary", "pay", "ctc"],
+            status: ["status", "state"],
+          };
+          if (aliases[n]) return [n, ...aliases[n]];
+          return [n, colName];
+        };
+
         const fileColumns = Object.keys(jsonData[0]);
         const columnMapping = new Map<string, string>();
+        const usedFileCols = new Set<string>();
 
-        // Map file columns to expected columns
         expectedColumns.forEach((expectedCol) => {
-          const normalizedExpected = normalizeColumnName(expectedCol);
-          const matchingFileCol = fileColumns.find(
-            (fileCol) => normalizeColumnName(fileCol) === normalizedExpected,
+          const possible = getPossibleNamesForColumn(expectedCol);
+          const normalizedPossible = new Set(possible.map(normalizeColumnName));
+          let match = fileColumns.find(
+            (fc) =>
+              !usedFileCols.has(fc) &&
+              (normalizedPossible.has(normalizeColumnName(fc)) ||
+                normalizeColumnName(fc) === normalizeColumnName(expectedCol)),
           );
-          if (matchingFileCol) {
-            columnMapping.set(expectedCol, matchingFileCol);
+          if (match) {
+            columnMapping.set(expectedCol, match);
+            usedFileCols.add(match);
           }
         });
 
@@ -159,8 +325,7 @@ export function ExcelImport() {
 
             // Type conversion
             if (col.type === "number") {
-              const numVal = Number(val);
-              cleaned[col.name] = isNaN(numVal) ? null : numVal;
+              cleaned[col.name] = parseNumber(val);
             } else if (col.type === "boolean") {
               if (typeof val === "boolean") {
                 cleaned[col.name] = val;
@@ -172,15 +337,7 @@ export function ExcelImport() {
                 cleaned[col.name] = Boolean(val);
               }
             } else if (col.type === "date") {
-              // Handle date values
-              if (typeof val === "number") {
-                // Excel date serial number
-                const date = XLSX.SSF.parse_date_code(val);
-                cleaned[col.name] =
-                  `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
-              } else {
-                cleaned[col.name] = String(val);
-              }
+              cleaned[col.name] = parseDate(val);
             } else {
               cleaned[col.name] = String(val);
             }
@@ -188,12 +345,16 @@ export function ExcelImport() {
           return cleaned;
         });
 
+        const nonEmptyRows = cleanedRows.filter((row) =>
+          Object.values(row).some((v) => v !== null && v !== ""),
+        );
+
         if (validationWarnings.length > 0) {
           setErrors(validationWarnings);
         }
 
-        setParsedRows(cleanedRows);
-        toast.success(`Parsed ${cleanedRows.length} rows successfully`);
+        setParsedRows(nonEmptyRows);
+        toast.success(`Parsed ${nonEmptyRows.length} rows successfully`);
       } catch (err) {
         setErrors([
           `Failed to parse file: ${err instanceof Error ? err.message : "Unknown error"}`,

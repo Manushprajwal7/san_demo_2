@@ -267,19 +267,56 @@ export async function DELETE(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, tableName, rowId, data } = body;
+    const { action, tableName, rowId, data, rows } = body;
+
+    // Some clients may accidentally call PUT during import. Support it to avoid 400s.
+    if (action === "bulk-insert") {
+      if (!tableName || !rows || !Array.isArray(rows)) {
+        return NextResponse.json(
+          {
+            error: "tableName and rows array are required",
+            received: {
+              tableName: Boolean(tableName),
+              rowsType: Array.isArray(rows) ? "array" : typeof rows,
+            },
+          },
+          { status: 400 },
+        );
+      }
+
+      const { data: result, error } = await supabase.rpc(
+        "bulk_insert_notice_rows",
+        {
+          p_table_name: tableName,
+          p_rows: rows,
+        },
+      );
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      return NextResponse.json(result);
+    }
 
     if (action === "update-row") {
-      if (!tableName || !rowId || !data) {
+      const effectiveRowId = rowId || data?.id;
+      if (!tableName || !effectiveRowId || !data) {
         return NextResponse.json(
-          { error: "tableName, rowId, and data are required" },
+          {
+            error: "tableName, rowId (or data.id), and data are required",
+            receivedKeys:
+              data && typeof data === "object" && !Array.isArray(data)
+                ? Object.keys(data)
+                : null,
+          },
           { status: 400 },
         );
       }
 
       const { error } = await supabase.rpc("update_notice_row", {
         p_table_name: tableName,
-        p_row_id: rowId,
+        p_row_id: effectiveRowId,
         p_data: data,
       });
 

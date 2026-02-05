@@ -89,11 +89,12 @@ export const leavesAPI = {
   updateLeave: (id: string, status: string) => apiClient.patch('/leaves', { id, status }),
 }
 
-// Licenses endpoints
-export const licensesAPI = {
-  getLicenses: (company: string) => apiClient.get(`/licenses?company=${company}`),
-  createLicense: (data: any) => apiClient.post('/licenses', data),
-  updateLicense: (id: string, data: any) => apiClient.patch('/licenses', { id, ...data }),
+// Branches API endpoints
+export const branchesAPI = {
+  getBranches: (company: string) => apiClient.get(`/branches?company=${company}`),
+  createBranch: (data: any) => apiClient.post('/branches', data),
+  updateBranch: (id: string, data: any) => apiClient.patch('/branches', { id, ...data }),
+  deleteBranch: (id: string) => apiClient.delete(`/branches?id=${id}`)
 }
 
 // Companies endpoints

@@ -34,8 +34,8 @@ const NAV_ITEMS: NavItem[] = [
     roles: [],
   },
   {
-    label: "Licenses",
-    href: "/dashboard/licenses",
+    label: "Branches",
+    href: "/dashboard/branches",
     icon: FileText,
     roles: [],
   },
