@@ -248,7 +248,7 @@ export function DataViewer() {
         tableInfo.columns.forEach((col) => {
           const value = row[col.name];
           cleanRow[col.name] =
-            value === null || value === undefined ? "" : value;
+            value === null || value === undefined ? "" : String(value);
         });
         return cleanRow;
       });

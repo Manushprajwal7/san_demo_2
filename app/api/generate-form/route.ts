@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
     const templateName = templatePath.replace(/^.*[/\\]/, "").replace(/\.docx$/i, "") || "form";
     const fileName = `${templateName}_filled.docx`;
 
-    return new NextResponse(result.buffer as Buffer, {
+    return new NextResponse(new Uint8Array(result.buffer as Buffer), {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

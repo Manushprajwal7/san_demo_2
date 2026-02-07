@@ -48,7 +48,14 @@ export async function GET(request: NextRequest) {
       .select("*")
       .order("created_at", { ascending: false });
 
-    const noticeTableStats = [];
+    const noticeTableStats: {
+      table_name: string;
+      display_name: string;
+      row_count: number;
+      columns: { name: string; type: string }[];
+      sample_data: Record<string, unknown>[];
+      created_at: string;
+    }[] = [];
 
     if (noticeTables && !noticeError) {
       // Get data for each notice table

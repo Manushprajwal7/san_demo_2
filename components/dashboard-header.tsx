@@ -46,14 +46,14 @@ export function DashboardHeader() {
       if (!user?.email) return;
       
       try {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('companies')
           .select('id')
           .eq('email', user.email)
           .single();
-          
+
         if (data) {
-          setCompanyId(data.id);
+          setCompanyId((data as { id: string }).id);
         }
       } catch (error) {
         console.error('Error fetching company ID:', error);

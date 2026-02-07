@@ -80,9 +80,10 @@ export default function CalendarView({ company }: { company: string }) {
   const daysInMonth = getDaysInMonth(currentDate);
   const firstDay = getFirstDayOfMonth(currentDate);
 
-  const calendarDays = Array.from({ length: firstDay })
-    .fill(null)
-    .concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
+  const calendarDays: (number | null)[] = [
+    ...new Array<null>(firstDay).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ];
 
   const handleDateClick = (day: number) => {
     const dateObj = new Date(

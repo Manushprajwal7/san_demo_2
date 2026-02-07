@@ -105,7 +105,7 @@ async function testDocxGeneration() {
 
     // Step 7: Populate template
     console.log("7️⃣ Populating template...");
-    const populatedBuffer = populateTemplate(templateBuffer, templateData);
+    const populatedBuffer = await populateTemplate(templateBuffer, templateData);
     console.log(
       `   Generated document size: ${populatedBuffer.length} bytes\n`,
     );

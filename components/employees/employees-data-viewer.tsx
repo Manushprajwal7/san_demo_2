@@ -446,7 +446,7 @@ export function EmployeesDataViewer() {
         const cleanRow: Record<string, string | number> = {};
         allColumns.forEach((col) => {
           const value = row[col];
-          cleanRow[col] = value === null || value === undefined ? "" : value;
+          cleanRow[col] = value === null || value === undefined ? "" : String(value);
         });
         return cleanRow;
       });
@@ -525,10 +525,10 @@ export function EmployeesDataViewer() {
     name
       .toLowerCase()
       .trim()
-      .replace(/\s+/g, "_")
-      .replace(/\./g, "_")
-      .replace(/-/g, "_")
-      .replace(/_+/g, "_");
+      .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
 
   // Common aliases: table column -> possible Excel header variations
   const getPossibleNamesForColumn = (colName: string): string[] => {
@@ -674,11 +674,65 @@ export function EmployeesDataViewer() {
     reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: "array" });
+        const workbook = XLSX.read(data, { type: "array", cellDates: true });
         const sheet = workbook.Sheets[workbook.SheetNames[0]];
+
+        // Expand sheet range to include all cells (handles edge cases with merged/sparse sheets)
+        const cellAddresses = Object.keys(sheet).filter(
+          (k) => !k.startsWith("!"),
+        );
+        if (cellAddresses.length > 0) {
+          let minR = Number.POSITIVE_INFINITY;
+          let minC = Number.POSITIVE_INFINITY;
+          let maxR = 0;
+          let maxC = 0;
+          for (const addr of cellAddresses) {
+            const decoded = XLSX.utils.decode_cell(addr);
+            if (decoded.r < minR) minR = decoded.r;
+            if (decoded.c < minC) minC = decoded.c;
+            if (decoded.r > maxR) maxR = decoded.r;
+            if (decoded.c > maxC) maxC = decoded.c;
+          }
+          if (Number.isFinite(minR) && Number.isFinite(minC)) {
+            sheet["!ref"] = XLSX.utils.encode_range({
+              s: { r: minR, c: minC },
+              e: { r: maxR, c: maxC },
+            });
+          }
+        }
+
+        const expectedNormalized = expectedColumns.map(normalizeColumnName);
+
+        // Auto-detect header row by scanning first 20 rows for best match
+        const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
+          header: 1,
+          defval: "",
+          blankrows: false,
+        });
+
+        const maxScan = Math.min(20, aoa.length);
+        let headerRowIndex = 0;
+        let bestScore = -1;
+
+        for (let i = 0; i < maxScan; i++) {
+          const row = Array.isArray(aoa[i]) ? aoa[i] : [];
+          const normalizedCells = row
+            .map((c) => normalizeColumnName(String(c ?? "")))
+            .filter(Boolean);
+
+          const score = normalizedCells.reduce((acc, cell) => {
+            return acc + (expectedNormalized.includes(cell) ? 1 : 0);
+          }, 0);
+
+          if (score > bestScore) {
+            bestScore = score;
+            headerRowIndex = i;
+          }
+        }
+
         const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(
           sheet,
-          { defval: "" },
+          { defval: "", range: headerRowIndex, blankrows: false },
         );
 
         if (jsonData.length === 0) {
@@ -1359,7 +1413,7 @@ export function EmployeesDataViewer() {
                 <TableBody>
                   {filteredAndSortedData.map((row, idx) => (
                     <TableRow
-                      key={row.id ?? idx}
+                      key={(row.id as string | number) ?? idx}
                       className="hover:bg-slate-50 cursor-pointer"
                       onClick={() => setSelectedRowDetail(row)}
                     >
