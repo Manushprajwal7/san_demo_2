@@ -20,6 +20,11 @@ import {
   TableCell,
 } from "@/components/ui/table";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -49,6 +54,8 @@ import {
   File,
   Upload,
   Calendar,
+  ChevronRight,
+  Bug,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
@@ -81,6 +88,45 @@ function getDateFromRow(row: Record<string, unknown>): Date | null {
       const d = new Date(val as string);
       if (!isNaN(d.getTime())) return d;
     }
+  }
+  return null;
+}
+
+/** Normalize date values to ISO YYYY-MM-DD for PostgreSQL; invalid dates become null. */
+function toISODate(val: string | number): string | null {
+  if (val === undefined || val === null || val === "") return null;
+  if (typeof val === "number") {
+    const date = XLSX.SSF.parse_date_code(val);
+    if (date.d === 0) return null; // e.g. Excel 1900-01-00
+    return `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
+  }
+  const s = String(val).trim();
+  if (!s) return null;
+  // DD-MM-YYYY or DD/MM/YYYY
+  const dmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const day = parseInt(d!, 10);
+    const month = parseInt(m!, 10);
+    const year = parseInt(y!, 10);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${y}-${m!.padStart(2, "0")}-${d!.padStart(2, "0")}`;
+    }
+  }
+  // Already YYYY-MM-DD
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    const [, y, m, d] = iso;
+    const day = parseInt(d!, 10);
+    const month = parseInt(m!, 10);
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return s.slice(0, 10);
+  }
+  const date = new Date(s);
+  if (!isNaN(date.getTime())) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
   return null;
 }
@@ -119,9 +165,17 @@ export function EmployeesDataViewer() {
     new Date().getFullYear().toString(),
   );
   const [importing, setImporting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [parsedRows, setParsedRows] = useState<Record<string, unknown>[]>([]);
   const [importFileName, setImportFileName] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
+  const [importDebugLog, setImportDebugLog] = useState<string[]>([]);
+  const [chunkSize, setChunkSize] = useState(100); // Default chunk size
+  const [totalRowCount, setTotalRowCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [selectedRowDetail, setSelectedRowDetail] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const tableInfo = useMemo(
@@ -143,6 +197,7 @@ export function EmployeesDataViewer() {
       fetchData();
     } else {
       setTableData([]);
+      setTotalRowCount(0);
     }
   }, [selectedTable]);
 
@@ -161,25 +216,117 @@ export function EmployeesDataViewer() {
     }
   };
 
-  const fetchData = async () => {
+  const fetchData = async (useChunked = false) => {
     if (!selectedTable) return;
+
+    if (useChunked) {
+      await fetchDataChunked();
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await fetch(
-        `/api/notice?action=get-data&tableName=${encodeURIComponent(selectedTable)}`,
+        `/api/employees?table=${encodeURIComponent(selectedTable)}&offset=0&limit=100`,
       );
       const data = await res.json();
       if (res.ok) {
-        setTableData(Array.isArray(data) ? data : []);
+        setTableData(Array.isArray(data.employees) ? data.employees : []);
+        setTotalRowCount(data.pagination?.totalItems ?? 0);
       } else {
         toast.error(data.error || "Failed to fetch data");
         setTableData([]);
+        setTotalRowCount(0);
       }
-    } catch {
+    } catch (error) {
+      console.error("Fetch error:", error);
       toast.error("Network error");
       setTableData([]);
+      setTotalRowCount(0);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!selectedTable || loadingMore || tableData.length >= totalRowCount) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(
+        `/api/employees?table=${encodeURIComponent(selectedTable)}&offset=${tableData.length}&limit=50`,
+      );
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.employees)) {
+        setTableData((prev) => [...prev, ...data.employees]);
+      }
+    } catch (error) {
+      console.error("Load more error:", error);
+      toast.error("Failed to load more rows");
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const fetchDataChunked = async () => {
+    if (!selectedTable) return;
+    
+    setLoading(true);
+    setIsDownloading(true);
+    setDownloadProgress(0);
+    
+    try {
+      // First, get the total count
+      const countRes = await fetch(
+        `/api/employees?table=${encodeURIComponent(selectedTable)}&chunk=1&chunkSize=1`,
+      );
+      
+      if (!countRes.ok) {
+        const error = await countRes.json();
+        throw new Error(error.error || 'Failed to fetch data count');
+      }
+      
+      const countData = await countRes.json();
+      const totalItems = countData.pagination?.totalItems || 0;
+      
+      if (totalItems === 0) {
+        setTableData([]);
+        return;
+      }
+      
+      const totalChunks = Math.ceil(totalItems / chunkSize);
+      let allData: Record<string, unknown>[] = [];
+      
+      // Fetch data in chunks
+      for (let i = 1; i <= totalChunks; i++) {
+        const res = await fetch(
+          `/api/employees?table=${encodeURIComponent(selectedTable)}&chunk=${i}&chunkSize=${chunkSize}`,
+        );
+        
+        if (!res.ok) {
+          const error = await res.json();
+          console.error(`Error fetching chunk ${i}:`, error);
+          continue;
+        }
+        
+        const data = await res.json();
+        if (data.employees && Array.isArray(data.employees)) {
+          allData = [...allData, ...data.employees];
+        }
+        
+        // Update progress
+        const progress = Math.round((i / totalChunks) * 100);
+        setDownloadProgress(progress);
+      }
+      
+      setTableData(allData);
+      setTotalRowCount(allData.length);
+    } catch (error) {
+      console.error("Chunked fetch error:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to fetch data in chunks");
+    } finally {
+      setLoading(false);
+      setIsDownloading(false);
+      setDownloadProgress(0);
     }
   };
 
@@ -423,7 +570,64 @@ export function EmployeesDataViewer() {
         "emp_id",
       ],
       email: ["email", "e-mail", "email_address"],
-      phone: ["phone", "mobile", "contact", "phone_number"],
+      // Phone / contact fields
+      phone: ["phone", "mobile", "contact", "phone_number", "phone no", "mobile no", "contact no"],
+      phone_no: [
+        "phone_no",
+        "phone no",
+        "phone number",
+        "mobile",
+        "mobile no",
+        "mobile_no",
+        "contact",
+        "contact no",
+        "contact_no",
+        "phone",
+      ],
+      phone_number: [
+        "phone_number",
+        "phone number",
+        "phone no",
+        "phone_no",
+        "mobile",
+        "mobile no",
+        "mobile_no",
+        "contact",
+        "contact no",
+        "contact_no",
+      ],
+      contact_no: [
+        "contact_no",
+        "contact no",
+        "contact",
+        "contactno",
+        "contact_number",
+        "contactnumber",
+        "secondary_contact",
+        "alt_phone",
+      ],
+      online_login: [
+        "online_login",
+        "online login",
+        "onlinelogin",
+        "online_access",
+        "onlineaccess",
+        "login",
+        "web_login",
+        "portal_login",
+        "can_login",
+      ],
+      slo_officer_name: [
+        "slo_officer_name",
+        "slo officer name",
+        "slo_officer",
+        "slo officer",
+        "sloofficername",
+        "slo_name",
+        "officer_name",
+        "slo",
+        "officer",
+      ],
       salary: ["salary", "pay", "ctc"],
       status: ["status", "state"],
     };
@@ -461,11 +665,13 @@ export function EmployeesDataViewer() {
     setImportFileName(file.name);
     setParsedRows([]);
     setErrors([]);
+    setImportDebugLog([]);
+    setUploadProgress(0);
 
     const expectedColumns = tableInfo.columns.map((c) => c.name);
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
@@ -482,9 +688,28 @@ export function EmployeesDataViewer() {
 
         const fileColumns = Object.keys(jsonData[0]);
         const columnMapping = new Map<string, string>();
+        const matchSource = new Map<string, "exact" | "alias">();
         const usedFileCols = new Set<string>();
 
+        // First pass: exact normalized match (e.g. "Contact No" -> contact_no)
+        // so shared aliases don't steal the wrong column (e.g. phone_no taking "Contact No")
         expectedColumns.forEach((expectedCol) => {
+          const expectedNorm = normalizeColumnName(expectedCol);
+          const exact = fileColumns.find(
+            (fc) =>
+              !usedFileCols.has(fc) &&
+              normalizeColumnName(fc) === expectedNorm,
+          );
+          if (exact) {
+            columnMapping.set(expectedCol, exact);
+            matchSource.set(expectedCol, "exact");
+            usedFileCols.add(exact);
+          }
+        });
+
+        // Second pass: alias match for any expected column still unmapped
+        expectedColumns.forEach((expectedCol) => {
+          if (columnMapping.has(expectedCol)) return;
           const match = findMatchingFileColumn(
             expectedCol,
             fileColumns,
@@ -492,20 +717,46 @@ export function EmployeesDataViewer() {
           );
           if (match) {
             columnMapping.set(expectedCol, match);
-          } else {
-            const exact = fileColumns.find(
-              (fc) =>
-                !usedFileCols.has(fc) &&
-                normalizeColumnName(fc) === normalizeColumnName(expectedCol),
-            );
-            if (exact) {
-              columnMapping.set(expectedCol, exact);
-              usedFileCols.add(exact);
-            }
+            matchSource.set(expectedCol, "alias");
           }
         });
 
         const missing = expectedColumns.filter((c) => !columnMapping.has(c));
+
+        // --- Detailed debug log ---
+        const debugLines: string[] = [];
+        debugLines.push("═══ FILE COLUMNS (raw from Excel) ═══");
+        fileColumns.forEach((fc, i) => {
+          debugLines.push(`  ${i + 1}. "${fc}"  →  normalized: "${normalizeColumnName(fc)}"`);
+        });
+        debugLines.push("");
+        debugLines.push("═══ EXPECTED COLUMNS (table schema) & MATCH RESULT ═══");
+        expectedColumns.forEach((expectedCol) => {
+          const fileCol = columnMapping.get(expectedCol);
+          const source = matchSource.get(expectedCol);
+          const possible = getPossibleNamesForColumn(expectedCol);
+          const possibleNorm = possible.map(normalizeColumnName).join(", ");
+          if (fileCol && source) {
+            debugLines.push(`  ✓ ${expectedCol}  →  "${fileCol}" (${source})`);
+          } else {
+            debugLines.push(`  ✗ ${expectedCol}  →  NO MATCH`);
+            debugLines.push(`      Tried normalized names: [ ${possibleNorm} ]`);
+            debugLines.push(`      Available file columns (normalized): [ ${fileColumns.map((fc) => normalizeColumnName(fc)).join(", ")} ]`);
+          }
+        });
+        debugLines.push("");
+        debugLines.push("═══ UNMAPPED FILE COLUMNS (in Excel but no expected column) ═══");
+        const mappedFileCols = new Set(columnMapping.values());
+        const unmappedFileCols = fileColumns.filter((fc) => !mappedFileCols.has(fc));
+        if (unmappedFileCols.length === 0) {
+          debugLines.push("  (none)");
+        } else {
+          unmappedFileCols.forEach((fc) => {
+            debugLines.push(`  - "${fc}" (normalized: "${normalizeColumnName(fc)}")`);
+          });
+        }
+        setImportDebugLog(debugLines);
+
         const validationWarnings: string[] = [];
         if (missing.length > 0) {
           validationWarnings.push(
@@ -529,9 +780,17 @@ export function EmployeesDataViewer() {
               return;
             }
 
+            // Phone/mobile/contact: always store as string to preserve leading zeros
+            if (/phone|mobile|contact/i.test(col.name)) {
+              const s = String(val).trim();
+              const digits = s.replace(/^\+/, "").replace(/\D/g, "");
+              cleaned[col.name] = digits ? (s.startsWith("+") ? "+" : "") + digits : null;
+              return;
+            }
+
             if (col.type === "number") {
               const numVal = Number(val);
-              cleaned[col.name] = isNaN(numVal) ? null : numVal;
+              cleaned[col.name] = Number.isFinite(numVal) ? numVal : null;
             } else if (col.type === "boolean") {
               if (typeof val === "boolean") cleaned[col.name] = val;
               else if (typeof val === "string") {
@@ -542,13 +801,7 @@ export function EmployeesDataViewer() {
                 cleaned[col.name] = Boolean(val);
               }
             } else if (col.type === "date") {
-              if (typeof val === "number") {
-                const date = XLSX.SSF.parse_date_code(val);
-                cleaned[col.name] =
-                  `${date.y}-${String(date.m).padStart(2, "0")}-${String(date.d).padStart(2, "0")}`;
-              } else {
-                cleaned[col.name] = String(val);
-              }
+              cleaned[col.name] = toISODate(val as string | number);
             } else {
               cleaned[col.name] = String(val);
             }
@@ -559,6 +812,7 @@ export function EmployeesDataViewer() {
         setParsedRows(cleanedRows);
         toast.success(`Parsed ${cleanedRows.length} rows`);
       } catch (err) {
+        console.error("File parsing error:", err);
         setErrors([
           `Failed to parse file: ${err instanceof Error ? err.message : "Unknown error"}`,
         ]);
@@ -567,39 +821,95 @@ export function EmployeesDataViewer() {
     reader.readAsArrayBuffer(file);
   };
 
+  const uploadChunk = async (chunk: any[], index: number, totalChunks: number): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const formData = new FormData();
+      formData.append('table', selectedTable);
+      formData.append('chunk', JSON.stringify(chunk));
+      formData.append('chunkIndex', index.toString());
+      formData.append('totalChunks', totalChunks.toString());
+      
+      const response = await fetch('/api/employees', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        return { success: false, error: error.error || 'Failed to upload chunk' };
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Chunk upload error:', error);
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown error during upload' 
+      };
+    }
+  };
+
   const handleImportSubmit = async () => {
     if (parsedRows.length === 0 || !selectedTable) return;
     setImporting(true);
+    setUploadProgress(0);
+    
     try {
-      const BATCH_SIZE = 50;
+      const CHUNK_SIZE = 100; // Process 100 rows at a time
+      const totalChunks = Math.ceil(parsedRows.length / CHUNK_SIZE);
+      let successfulChunks = 0;
+      let failedChunks = 0;
       let totalInserted = 0;
       let totalFailed = 0;
 
-      for (let i = 0; i < parsedRows.length; i += BATCH_SIZE) {
-        const batch = parsedRows.slice(i, i + BATCH_SIZE);
-        const res = await fetch("/api/notice", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "bulk-insert",
-            tableName: selectedTable,
-            rows: batch,
-          }),
+      // Process chunks in parallel (3 at a time)
+      const chunkPromises = [];
+      
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = parsedRows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        
+        // Process chunk with a small delay to avoid overwhelming the server
+        const chunkPromise = new Promise<void>(async (resolve) => {
+          try {
+            // Add a small delay between chunks (100ms per chunk)
+            await new Promise(resolve => setTimeout(resolve, 100 * i));
+            
+            const { success, error } = await uploadChunk(chunk, i, totalChunks);
+            
+            if (success) {
+              successfulChunks++;
+              totalInserted += chunk.length;
+            } else {
+              failedChunks++;
+              totalFailed += chunk.length;
+              console.error(`Chunk ${i + 1} failed:`, error);
+            }
+            
+            // Update progress
+            const progress = Math.round(((i + 1) / totalChunks) * 100);
+            setUploadProgress(progress);
+            
+            resolve();
+          } catch (error) {
+            console.error(`Error processing chunk ${i + 1}:`, error);
+            failedChunks++;
+            totalFailed += chunk.length;
+            resolve();
+          }
         });
-
-        const data = await res.json();
-
-        if (!res.ok) {
-          toast.error(
-            data.error ||
-              `Import failed at batch ${Math.floor(i / BATCH_SIZE) + 1}`,
-          );
-          setImporting(false);
-          return;
+        
+        chunkPromises.push(chunkPromise);
+        
+        // Process 3 chunks in parallel
+        if (chunkPromises.length >= 3) {
+          await Promise.all(chunkPromises);
+          chunkPromises.length = 0; // Clear the array
         }
-
-        totalInserted += data.inserted ?? 0;
-        totalFailed += data.failed ?? 0;
+      }
+      
+      // Process any remaining chunks
+      if (chunkPromises.length > 0) {
+        await Promise.all(chunkPromises);
       }
 
       toast.success(
@@ -680,13 +990,37 @@ export function EmployeesDataViewer() {
       <Card className="rounded-2xl bg-white p-6 shadow-sm border border-slate-200">
         <div className="space-y-4">
           <div>
-            <Label className="text-xs font-medium text-slate-600">
-              Select Table
-            </Label>
-            <p className="text-xs text-slate-500 mt-1 mb-2">
-              Tables are created in Notice Builder. Create a table there first,
-              then import data here.
-            </p>
+            <div className="flex justify-between items-center">
+              <div>
+                <Label className="text-xs font-medium text-slate-600">
+                  Select Table
+                </Label>
+                <p className="text-xs text-slate-500 mt-1 mb-2">
+                  Tables are created in Notice Builder. Create a table there first,
+                  then import data here.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs font-medium text-slate-600 whitespace-nowrap">
+                  Chunk Size:
+                </Label>
+                <Select 
+                  value={chunkSize.toString()} 
+                  onValueChange={(v) => setChunkSize(Number(v))}
+                >
+                  <SelectTrigger className="w-[100px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                    <SelectItem value="250">250</SelectItem>
+                    <SelectItem value="500">500</SelectItem>
+                    <SelectItem value="1000">1000</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <Select
               value={selectedTable}
               onValueChange={(v) => {
@@ -753,18 +1087,37 @@ export function EmployeesDataViewer() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button
-                onClick={fetchData}
-                variant="outline"
-                size="sm"
-                disabled={loading}
-              >
-                <RefreshCw
-                  size={16}
-                  className={loading ? "animate-spin" : ""}
-                />
-                Refresh
-              </Button>
+              <div className="relative">
+                <Button
+                  onClick={() => fetchData(parsedRows.length > 0 || tableData.length > 1000)}
+                  variant="outline"
+                  size="sm"
+                  disabled={loading}
+                  className="relative overflow-hidden"
+                >
+                  <div 
+                    className="absolute left-0 top-0 h-full bg-blue-100 opacity-20 transition-all duration-300"
+                    style={{ 
+                      width: isDownloading ? `${downloadProgress}%` : '0%',
+                      backgroundColor: isDownloading ? 'rgba(59, 130, 246, 0.2)' : 'transparent'
+                    }}
+                  />
+                  <div className="relative z-10 flex items-center">
+                    <RefreshCw
+                      size={16}
+                      className={loading ? "animate-spin" : ""}
+                    />
+                    <span className="ml-2">
+                      {isDownloading ? `Loading... ${downloadProgress}%` : 'Refresh'}
+                    </span>
+                  </div>
+                </Button>
+                {isDownloading && (
+                  <div className="absolute -bottom-6 left-0 right-0 text-xs text-center text-blue-600">
+                    Downloading data in chunks...
+                  </div>
+                )}
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -788,7 +1141,7 @@ export function EmployeesDataViewer() {
                 </DropdownMenuContent>
               </DropdownMenu>
               <div className="ml-auto text-sm text-slate-600">
-                {filteredAndSortedData.length} of {tableData.length} rows
+                {filteredAndSortedData.length} of {totalRowCount > 0 ? totalRowCount : tableData.length} rows
               </div>
             </div>
           )}
@@ -804,26 +1157,49 @@ export function EmployeesDataViewer() {
           <p className="text-xs text-slate-600 mb-3">
             Expected columns: {tableInfo.columns.map((c) => c.name).join(", ")}
           </p>
-          <div className="flex flex-wrap items-center gap-4">
-            <Input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xls,.xlsx"
-              onChange={handleImportFile}
-              className="max-w-xs"
-            />
-            <Upload size={20} className="text-slate-400" />
-            {importFileName && (
-              <span className="text-sm text-slate-600">
-                📄 {importFileName}
-              </span>
-            )}
-            {parsedRows.length > 0 && (
-              <Button onClick={handleImportSubmit} disabled={importing}>
-                {importing
-                  ? "Importing..."
-                  : `Import ${parsedRows.length} Rows`}
-              </Button>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-4">
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xls,.xlsx"
+                onChange={handleImportFile}
+                className="max-w-xs"
+                disabled={importing}
+              />
+              <Upload size={20} className="text-slate-400" />
+              {importFileName && (
+                <span className="text-sm text-slate-600">
+                  📄 {importFileName}
+                </span>
+              )}
+              {parsedRows.length > 0 && (
+                <Button 
+                  onClick={handleImportSubmit} 
+                  disabled={importing}
+                  className="relative overflow-hidden"
+                >
+                  <div 
+                    className="absolute left-0 top-0 h-full bg-green-100 opacity-20 transition-all duration-300"
+                    style={{ 
+                      width: `${uploadProgress}%`,
+                      backgroundColor: importing ? 'rgba(16, 185, 129, 0.2)' : 'transparent'
+                    }}
+                  />
+                  <span className="relative z-10">
+                    {importing ? `Uploading... ${uploadProgress}%` : `Import ${parsedRows.length} Rows`}
+                  </span>
+                </Button>
+              )}
+            </div>
+            
+            {importing && (
+              <div className="w-full bg-gray-100 rounded-full h-2.5">
+                <div 
+                  className="bg-green-600 h-2.5 rounded-full transition-all duration-300" 
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
             )}
           </div>
           {errors.length > 0 && (
@@ -834,6 +1210,20 @@ export function EmployeesDataViewer() {
                 ))}
               </ul>
             </div>
+          )}
+          {importDebugLog.length > 0 && (
+            <Collapsible className="mt-4">
+              <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900">
+                <Bug size={16} className="text-slate-500" />
+                Show detailed import log (debug)
+                <ChevronRight size={16} className="transition-transform [[data-state=open]_&]:rotate-90" />
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <pre className="mt-2 p-4 bg-slate-900 text-slate-100 text-xs rounded-lg overflow-auto max-h-80 font-mono whitespace-pre-wrap break-all">
+                  {importDebugLog.join("\n")}
+                </pre>
+              </CollapsibleContent>
+            </Collapsible>
           )}
         </Card>
       )}
@@ -968,7 +1358,11 @@ export function EmployeesDataViewer() {
                 </TableHeader>
                 <TableBody>
                   {filteredAndSortedData.map((row, idx) => (
-                    <TableRow key={idx} className="hover:bg-slate-50">
+                    <TableRow
+                      key={row.id ?? idx}
+                      className="hover:bg-slate-50 cursor-pointer"
+                      onClick={() => setSelectedRowDetail(row)}
+                    >
                       {allColumns.map((col) => (
                         <TableCell key={col} className="font-normal">
                           {row[col] === null || row[col] === undefined
@@ -976,7 +1370,7 @@ export function EmployeesDataViewer() {
                             : String(row[col])}
                         </TableCell>
                       ))}
-                      <TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-2">
                           <Button
                             onClick={() => setEditingRow({ ...row })}
@@ -1001,9 +1395,61 @@ export function EmployeesDataViewer() {
                 </TableBody>
               </Table>
             )}
+            {!loading && filteredAndSortedData.length > 0 && tableData.length < totalRowCount && (
+              <div className="p-4 border-t border-slate-200 flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="min-w-[140px]"
+                >
+                  {loadingMore ? (
+                    <RefreshCw size={16} className="animate-spin mr-2" />
+                  ) : null}
+                  {loadingMore ? "Loading…" : "Load more"}
+                </Button>
+              </div>
+            )}
           </div>
         </Card>
       )}
+
+      {/* Row detail dialog — full row contents */}
+      <Dialog open={!!selectedRowDetail} onOpenChange={() => setSelectedRowDetail(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Row details</DialogTitle>
+            <DialogDescription>All columns for this row</DialogDescription>
+          </DialogHeader>
+          {selectedRowDetail && (
+            <div className="grid gap-3 py-4">
+              {Object.entries(selectedRowDetail).map(([key, value]) => (
+                <div key={key} className="flex gap-3 border-b border-slate-100 pb-2 last:border-0">
+                  <span className="font-medium text-slate-600 shrink-0 w-[180px]">
+                    {key.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-slate-900 break-words">
+                    {value === null || value === undefined ? "—" : String(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectedRowDetail(null)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedRowDetail) setEditingRow({ ...selectedRowDetail });
+                setSelectedRowDetail(null);
+              }}
+            >
+              Edit row
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={!!editingRow} onOpenChange={() => setEditingRow(null)}>

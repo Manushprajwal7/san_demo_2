@@ -160,8 +160,28 @@ export function ExcelImport() {
           return;
         }
 
-        const parseNumber = (val: unknown): number | null => {
+        const parseNumber = (
+          val: unknown,
+          columnName: string,
+        ): number | string | null => {
           if (val === null || val === undefined || val === "") return null;
+
+          // Check if this is a phone number field
+          const isPhoneField = /phone|mobile|contact|tel/i.test(columnName);
+
+          if (isPhoneField) {
+            // For phone numbers, always treat as string to preserve leading zeros
+            if (typeof val === "number") {
+              // Convert number to string, preserving all digits
+              return String(Math.floor(val));
+            }
+            const s = String(val).trim();
+            // Remove any non-digit characters except + at the start
+            const cleaned = s.replace(/[^\d+]/g, "");
+            return cleaned || null;
+          }
+
+          // For regular numbers
           if (typeof val === "number") return Number.isFinite(val) ? val : null;
           const s = String(val).trim();
           if (!s) return null;
@@ -250,10 +270,158 @@ export function ExcelImport() {
               "emp id",
               "emp_id",
             ],
-            email: ["email", "e-mail", "email_address"],
-            phone: ["phone", "mobile", "contact", "phone_number"],
+            email: ["email", "e-mail", "email_address", "e_mail"],
+            email_id: [
+              "email_id",
+              "email",
+              "e-mail",
+              "email_address",
+              "emailid",
+            ],
+            phone: [
+              "phone",
+              "mobile",
+              "contact",
+              "phone_number",
+              "mobile_number",
+              "contact_number",
+              "telephone",
+              "tel",
+            ],
+            phone_no: [
+              "phone_no",
+              "phone",
+              "phoneno",
+              "phone_number",
+              "contact",
+              "mobile",
+            ],
+            contact_no: [
+              "contact_no",
+              "contact",
+              "contactno",
+              "contact_number",
+              "contactnumber",
+              "phone",
+              "mobile",
+              "phone_number",
+              "secondary_contact",
+              "alt_phone",
+            ],
+            mobile_number: [
+              "mobile_number",
+              "mobile",
+              "mobilenumber",
+              "phone",
+              "contact",
+              "phone_number",
+            ],
             salary: ["salary", "pay", "ctc"],
             status: ["status", "state"],
+            online_login: [
+              "online_login",
+              "onlinelogin",
+              "online_access",
+              "onlineaccess",
+              "login",
+              "has_login",
+              "web_login",
+              "portal_login",
+              "can_login",
+            ],
+            user_id: ["user_id", "userid", "username", "user_name", "login_id"],
+            password: ["password", "pwd", "pass"],
+            slo_officer_name: [
+              "slo_officer_name",
+              "slo_officer",
+              "sloofficername",
+              "slo_name",
+              "officer_name",
+              "slo",
+              "officer",
+            ],
+            circle_no: ["circle_no", "circleno", "circle_number", "circle"],
+            license_no: [
+              "license_no",
+              "licenseno",
+              "license_number",
+              "licence_no",
+            ],
+            license_date: [
+              "license_date",
+              "licensedate",
+              "license_issue_date",
+              "licence_date",
+            ],
+            opened_on: ["opened_on", "openedon", "opening_date", "open_date"],
+            date_of_renewal: [
+              "date_of_renewal",
+              "dateofrenewal",
+              "renewal_date",
+              "renewaldate",
+            ],
+            renewed_upto: [
+              "renewed_upto",
+              "renewedupto",
+              "renewal_expiry",
+              "valid_upto",
+            ],
+            number_of_years_renewed: [
+              "number_of_years_renewed",
+              "numberofyearsrenewed",
+              "years_renewed",
+              "renewal_years",
+            ],
+            approved_manpower: [
+              "approved_manpower",
+              "approvedmanpower",
+              "approved_strength",
+              "manpower",
+            ],
+            manpower_cost: [
+              "manpower_cost",
+              "manpowercost",
+              "manpower_expense",
+              "labor_cost",
+            ],
+            managing_director: [
+              "managing_director",
+              "managingdirector",
+              "md",
+              "director",
+            ],
+            name_of_the_manager: [
+              "name_of_the_manager",
+              "nameofthemanager",
+              "manager_name",
+              "manager",
+            ],
+            state_head: [
+              "state_head",
+              "statehead",
+              "state_manager",
+              "state_incharge",
+            ],
+            sales_head: [
+              "sales_head",
+              "saleshead",
+              "sales_manager",
+              "sales_incharge",
+            ],
+            address_i: [
+              "address_i",
+              "addressi",
+              "address_1",
+              "address1",
+              "address",
+            ],
+            geography: ["geography", "region", "area", "zone"],
+            district: ["district", "dist"],
+            branch: ["branch", "branch_name", "location"],
+            asm: ["asm", "area_sales_manager", "area_manager"],
+            fee: ["fee", "fees", "amount", "charge"],
+            male: ["male", "male_count", "males"],
+            female: ["female", "female_count", "females"],
           };
           if (aliases[n]) return [n, ...aliases[n]];
           return [n, colName];
@@ -263,14 +431,30 @@ export function ExcelImport() {
         const columnMapping = new Map<string, string>();
         const usedFileCols = new Set<string>();
 
+        // First pass: exact normalized match (e.g. Contact_No -> contact_no)
+        // so shared aliases (e.g. "contact") don't steal the wrong column
         expectedColumns.forEach((expectedCol) => {
-          const possible = getPossibleNamesForColumn(expectedCol);
-          const normalizedPossible = new Set(possible.map(normalizeColumnName));
-          let match = fileColumns.find(
+          const expectedNorm = normalizeColumnName(expectedCol);
+          const match = fileColumns.find(
             (fc) =>
               !usedFileCols.has(fc) &&
-              (normalizedPossible.has(normalizeColumnName(fc)) ||
-                normalizeColumnName(fc) === normalizeColumnName(expectedCol)),
+              normalizeColumnName(fc) === expectedNorm,
+          );
+          if (match) {
+            columnMapping.set(expectedCol, match);
+            usedFileCols.add(match);
+          }
+        });
+
+        // Second pass: alias match for any expected column still unmapped
+        expectedColumns.forEach((expectedCol) => {
+          if (columnMapping.has(expectedCol)) return;
+          const possible = getPossibleNamesForColumn(expectedCol);
+          const normalizedPossible = new Set(possible.map(normalizeColumnName));
+          const match = fileColumns.find(
+            (fc) =>
+              !usedFileCols.has(fc) &&
+              normalizedPossible.has(normalizeColumnName(fc)),
           );
           if (match) {
             columnMapping.set(expectedCol, match);
@@ -325,7 +509,13 @@ export function ExcelImport() {
 
             // Type conversion
             if (col.type === "number") {
-              cleaned[col.name] = parseNumber(val);
+              const result = parseNumber(val, col.name);
+              // If it's a phone field and we got a string back, keep it as string
+              if (typeof result === "string") {
+                cleaned[col.name] = result;
+              } else {
+                cleaned[col.name] = result;
+              }
             } else if (col.type === "boolean") {
               if (typeof val === "boolean") {
                 cleaned[col.name] = val;

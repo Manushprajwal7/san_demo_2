@@ -101,6 +101,10 @@ export function FieldDefinition({ onFieldsParsed }: FieldDefinitionProps) {
           <span className="font-medium">date</span>,{" "}
           <span className="font-medium">boolean</span>
         </p>
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+          💡 Tip: Use <span className="font-semibold">text</span> type for phone
+          numbers to preserve leading zeros (e.g., phone:text)
+        </p>
         <Textarea
           id="field-input"
           value={input}
