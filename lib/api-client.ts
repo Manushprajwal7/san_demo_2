@@ -66,6 +66,7 @@ export const branchesAPI = {
   getBranches: (company: string) => apiClient.get(`/branches?company=${company}`),
   createBranch: (data: any) => apiClient.post('/branches', data),
   updateBranch: (id: string, data: any) => apiClient.patch(`/branches?id=${id}`, { id, ...data }),
+  deleteBranch: (id: string) => apiClient.delete(`/branches?id=${id}`),
 }
 
 // Calendar endpoints
@@ -87,14 +88,6 @@ export const leavesAPI = {
   getLeaveRecords: (company: string) => apiClient.get(`/leaves?company=${company}`),
   createLeave: (data: any) => apiClient.post('/leaves', data),
   updateLeave: (id: string, status: string) => apiClient.patch('/leaves', { id, status }),
-}
-
-// Branches API endpoints
-export const branchesAPI = {
-  getBranches: (company: string) => apiClient.get(`/branches?company=${company}`),
-  createBranch: (data: any) => apiClient.post('/branches', data),
-  updateBranch: (id: string, data: any) => apiClient.patch('/branches', { id, ...data }),
-  deleteBranch: (id: string) => apiClient.delete(`/branches?id=${id}`)
 }
 
 // Companies endpoints
