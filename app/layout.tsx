@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { AuthProvider } from "@/lib/auth-context";
+import { QueryClientProvider } from "@/components/query-client-provider";
 import "./globals.css";
 
 const inter = Inter({
@@ -41,7 +42,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} antialiased`}>
-        <AuthProvider>{children}</AuthProvider>
+        <QueryClientProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryClientProvider>
         <Analytics />
       </body>
     </html>

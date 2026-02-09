@@ -1,7 +1,29 @@
 "use client";
 
-import EnhancedDashboard from "@/components/enhanced-dashboard";
+import dynamic from "next/dynamic";
 import { DashboardHeader } from "@/components/dashboard-header";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const OptimizedDashboard = dynamic(
+  () => import("@/components/optimized-dashboard").then((m) => m.default),
+  {
+    loading: () => (
+      <div className="space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 rounded-xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-80 rounded-xl" />
+          ))}
+        </div>
+      </div>
+    ),
+    ssr: false,
+  }
+);
 
 export default function DashboardPage() {
   return (
@@ -17,7 +39,7 @@ export default function DashboardPage() {
               Comprehensive overview of all your data tables and statistics
             </p>
           </div>
-          <EnhancedDashboard />
+          <OptimizedDashboard />
         </div>
       </main>
     </div>

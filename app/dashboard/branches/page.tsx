@@ -1,6 +1,6 @@
 "use client";
 
-import EnhancedBranchManager from "@/components/enhanced-branch-manager";
+import KABranchesViewer from "@/components/branches/ka-branches-viewer";
 import { useCompany } from "@/components/company-context";
 import { DashboardHeader } from "@/components/dashboard-header";
 
@@ -14,13 +14,13 @@ export default function BranchesPage() {
         <div className="max-w-7xl mx-auto">
           <div className="mb-8">
             <h1 className="text-4xl font-bold text-gray-900 mb-2">
-              Branch Management
+              KA Branches Management
             </h1>
             <p className="text-gray-600 text-lg">
-              Track, manage, and generate reports for all your company branches
+              View and manage all Karnataka branches with advanced filtering and reporting capabilities
             </p>
           </div>
-          <EnhancedBranchManager company={company} />
+          <KABranchesViewer company={company} />
         </div>
       </main>
     </div>

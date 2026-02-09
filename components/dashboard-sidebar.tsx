@@ -11,6 +11,8 @@ import {
   ClipboardList,
   ShieldCheck,
   FileOutput,
+  Activity,
+  FileDown,
 } from "lucide-react";
 
 interface NavItem {
@@ -61,6 +63,18 @@ const NAV_ITEMS: NavItem[] = [
     label: "Form Generator",
     href: "/dashboard/form-generator",
     icon: FileOutput,
+    roles: [],
+  },
+  {
+    label: "DOCX to PDF",
+    href: "/dashboard/convert",
+    icon: FileDown,
+    roles: [],
+  },
+  {
+    label: "Logs",
+    href: "/dashboard/logs",
+    icon: Activity,
     roles: [],
   },
 ];

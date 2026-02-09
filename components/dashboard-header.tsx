@@ -69,7 +69,7 @@ export function DashboardHeader() {
         <div className="flex items-center gap-3">
           <div>
             <h1 className="font-semibold text-base text-foreground leading-tight">
-              Sangeetha Compliance Management Software
+              Sangeetha Compliance Management 
             </h1>
           </div>
         </div>
