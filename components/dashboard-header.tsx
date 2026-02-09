@@ -20,7 +20,27 @@ const MONTHS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-export function DashboardHeader() {
+interface DashboardHeaderProps {
+  selectedState?: string;
+  onStateChange?: (state: string) => void;
+  selectedBranch?: string;
+  onBranchChange?: (branch: string) => void;
+  selectedMonth?: string;
+  onMonthChange?: (month: string) => void;
+  selectedYear?: string;
+  onYearChange?: (year: string) => void;
+}
+
+export function DashboardHeader({
+  selectedState,
+  onStateChange,
+  selectedBranch,
+  onBranchChange,
+  selectedMonth,
+  onMonthChange,
+  selectedYear,
+  onYearChange,
+}: DashboardHeaderProps) {
   const { user, logout } = useAuth();
   const router = useRouter();
 
@@ -30,10 +50,6 @@ export function DashboardHeader() {
   };
 
   const now = new Date();
-  const [month, setMonth] = useState((now.getMonth() + 1).toString());
-  const [year, setYear] = useState(now.getFullYear().toString());
-  const [selectedState, setSelectedState] = useState("");
-  const [selectedBranch, setSelectedBranch] = useState("");
   const [companyId, setCompanyId] = useState<string | null>(null);
   const supabase = createClient();
 
@@ -44,7 +60,7 @@ export function DashboardHeader() {
   useEffect(() => {
     const fetchCompanyId = async () => {
       if (!user?.email) return;
-      
+
       try {
         const { data } = await supabase
           .from('companies')
@@ -69,7 +85,7 @@ export function DashboardHeader() {
         <div className="flex items-center gap-3">
           <div>
             <h1 className="font-semibold text-base text-foreground leading-tight">
-              Sangeetha Compliance Management 
+              Sangeetha Compliance Management
             </h1>
           </div>
         </div>
@@ -78,22 +94,22 @@ export function DashboardHeader() {
           <div className="flex items-center gap-2">
             <IndianStatesDropdown
               value={selectedState}
-              onChange={setSelectedState}
+              onChange={onStateChange}
               className="w-[200px]"
             />
           </div>
-          
+
           <div className="flex items-center gap-2">
             <BranchDropdown
               companyId={companyId || undefined}
               value={selectedBranch}
-              onChange={setSelectedBranch}
+              onChange={onBranchChange}
               className="w-[200px]"
             />
           </div>
-          
+
           <div className="flex items-center gap-2">
-            <Select value={month} onValueChange={setMonth}>
+            <Select value={selectedMonth} onValueChange={onMonthChange}>
               <SelectTrigger className="w-[90px] h-9">
                 <SelectValue />
               </SelectTrigger>
@@ -105,7 +121,7 @@ export function DashboardHeader() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={year} onValueChange={setYear}>
+            <Select value={selectedYear} onValueChange={onYearChange}>
               <SelectTrigger className="w-[80px] h-9">
                 <SelectValue />
               </SelectTrigger>
@@ -118,6 +134,7 @@ export function DashboardHeader() {
               </SelectContent>
             </Select>
           </div>
+
           <div className="text-right">
             <div className="font-medium text-sm text-foreground">
               {user?.name}
