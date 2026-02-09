@@ -51,6 +51,7 @@
     "docx-templates": "^4.15.0",
     "docxtemplater": "^3.67.6",
     "embla-carousel-react": "8.5.1",
+    "framer-motion": "^12.33.0",
     "input-otp": "1.4.1",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
