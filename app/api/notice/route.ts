@@ -26,6 +26,9 @@ export async function GET(request: NextRequest) {
 
     if (action === "data") {
       const tableName = searchParams.get("table");
+      const page = parseInt(searchParams.get("page") || "1");
+      const pageSize = parseInt(searchParams.get("pageSize") || "50");
+
       if (!tableName) {
         return NextResponse.json(
           { error: "table parameter required" },
@@ -35,6 +38,8 @@ export async function GET(request: NextRequest) {
 
       const { data, error } = await supabase.rpc("get_notice_table_data", {
         p_table_name: tableName,
+        p_page: page,
+        p_page_size: pageSize,
       });
 
       if (error) {

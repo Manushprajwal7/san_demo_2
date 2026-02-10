@@ -60,38 +60,40 @@ export async function GET(request: NextRequest) {
     if (noticeTables && !noticeError) {
       // Get data for each notice table
       for (const table of noticeTables) {
-        try {
-          // Get row count and sample data
-          const { data: tableData, error: dataError } = await supabase.rpc(
-            "get_notice_table_data",
-            { p_table_name: table.table_name },
-          );
+          // Get row count and sample data efficiently using direct queries
+          // distinct queries are better than fetching all data
+          const { count, error: countError } = await supabase
+            .from(table.table_name)
+            .select("*", { count: "exact", head: true });
 
-          if (!dataError && Array.isArray(tableData)) {
-            noticeTableStats.push({
+          const { data: sampleData, error: sampleError } = await supabase
+            .from(table.table_name)
+            .select("*")
+            .order("created_at", { ascending: false })
+            .limit(3);
+
+          if (!countError && !sampleError) {
+             noticeTableStats.push({
               table_name: table.table_name,
               display_name: table.display_name,
-              row_count: tableData.length,
+              row_count: count || 0,
               columns: table.columns || [],
-              sample_data: tableData.slice(0, 3), // First 3 rows as sample
+              sample_data: (sampleData || []) as Record<string, unknown>[],
               created_at: table.created_at,
             });
+          } else {
+             console.error(`Error fetching stats for ${table.table_name}`, countError, sampleError);
+             // Push with partial/zero data on error
+             noticeTableStats.push({
+              table_name: table.table_name,
+              display_name: table.display_name,
+              row_count: 0,
+              columns: table.columns || [],
+              sample_data: [],
+              created_at: table.created_at,
+             });
           }
-        } catch (err) {
-          console.error(
-            `Error fetching data for table ${table.table_name}:`,
-            err,
-          );
-          // Add table with zero count if data fetch fails
-          noticeTableStats.push({
-            table_name: table.table_name,
-            display_name: table.display_name,
-            row_count: 0,
-            columns: table.columns || [],
-            sample_data: [],
-            created_at: table.created_at,
-          });
-        }
+
       }
     }
 

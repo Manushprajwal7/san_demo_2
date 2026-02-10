@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 
+// Initialize Supabase Client (outside handler to share connection if possible, strictly for service role here)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL || "",
   process.env.SUPABASE_SERVICE_ROLE_KEY || "",
@@ -43,444 +45,389 @@ export interface OverviewData {
   last_updated: string;
 }
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url);
+// Cached Data Fetching Function
+const getCachedDashboardData = unstable_cache(
+  async (stateFilter: string, branchFilter: string) => {
+    // 1. Fetch Branches (Parallelize KA and Regular)
+    // Only fetch needed columns - using * to avoid missing column errors if schema varies
+    const branchCols = "*";
 
-    // Filter parameters
-    const stateFilter = searchParams.get("state") || "all";
-    const branchFilter = searchParams.get("branch") || "all";
-    const yearFilter = searchParams.get("year") || new Date().getFullYear().toString();
-    const fromMonth = searchParams.get("fromMonth") || "01";
-    const toMonth = searchParams.get("toMonth") || (new Date().getMonth() + 1).toString().padStart(2, "0");
+    const [kaBranchesResult, regularBranchesResult] = await Promise.all([
+      supabase.from("ka_branches").select(branchCols),
+      supabase.from("branches").select("*"), // Fallback table might have different schema, keep * or inspect
+    ]);
 
-    console.log("Filters:", { stateFilter, branchFilter, yearFilter, fromMonth, toMonth });
-
-    // Fetch all branches - try ka_branches first (main branches table), then fallback to branches
     let branches: any[] = [];
-
-    // Try ka_branches table first (this is where KA branch data is stored)
-    const { data: kaBranches, error: kaBranchError } = await supabase
-      .from("ka_branches")
-      .select("*");
-
-    if (kaBranches && kaBranches.length > 0) {
-      branches = kaBranches;
-      console.log("KA Branches fetched:", kaBranches.length);
-    } else {
-      // Fallback to branches table
-      const { data: regularBranches, error: branchError } = await supabase
-        .from("branches")
-        .select("*");
-
-      if (regularBranches && regularBranches.length > 0) {
-        branches = regularBranches;
-      }
-      console.log("Regular Branches fetched:", regularBranches?.length || 0, branchError?.message || "no error");
+    if (kaBranchesResult.data && kaBranchesResult.data.length > 0) {
+      branches = kaBranchesResult.data;
+    } else if (regularBranchesResult.data) {
+      branches = regularBranchesResult.data;
     }
 
-    // Fetch employees from man_power table
-    const { data: manPowerData, error: manPowerError } = await supabase
-      .from("man_power")
-      .select("*");
-
-    console.log("Man power fetched:", manPowerData?.length || 0, manPowerError?.message || "no error");
-
-    // Also try notice_tables_registry for employee tables
-    const { data: registryTables } = await supabase
-      .from("notice_tables_registry")
-      .select("table_name, display_name");
-
-    let allEmployees: any[] = manPowerData || [];
-
-    // If we have registry tables, fetch employee data from them
-    if (registryTables && registryTables.length > 0) {
-      for (const table of registryTables) {
-        try {
-          const { data: tableData } = await supabase
-            .from(table.table_name)
-            .select("*");
-          if (tableData && tableData.length > 0) {
-            // Add table source to each record
-            const enrichedData = tableData.map((row: any) => ({
-              ...row,
-              _source_table: table.table_name,
-              _display_name: table.display_name,
-            }));
-            allEmployees = [...allEmployees, ...enrichedData];
-          }
-        } catch (err) {
-          console.log(`Could not fetch from ${table.table_name}:`, err);
-        }
-      }
-    }
-
-    console.log("Total employees before filter:", allEmployees.length);
-
-    // --- Apply Filters ---
-
-    // 1. State Filter
+    // 2. Apply Filters to Branches (In-Memory is fast for < few thousand rows)
     if (stateFilter && stateFilter !== "all" && stateFilter !== "all-states") {
       const searchState = stateFilter.toLowerCase();
-
-      // Filter branches
       branches = branches.filter((b: any) => {
-        // Check multiple fields for branch name and location
-        const name = (b.name || b.branch || b.branch_name || b.location || "").toLowerCase();
+        const name = (
+          b.name ||
+          b.branch ||
+          b.branch_name ||
+          b.location ||
+          ""
+        ).toLowerCase();
         const geography = (b.geography || "").toLowerCase();
         const district = (b.district || "").toLowerCase();
-        const stateHead = (b.state_head || "").toLowerCase();
 
-        // State-specific checks
-        if (searchState === "karnataka" && (
-          geography.includes("karnataka") ||
-          district.includes("bangalore") ||
-          district.includes("mysore") ||
-          name.includes("(ka)") ||
-          name.includes("karnataka") ||
-          name.includes("bengaluru")
-        )) return true;
+        // Simplified state logic (can be expanded if needed to match original exactness)
+        if (
+          searchState === "karnataka" &&
+          (geography.includes("karnataka") ||
+            district.includes("bangalore") ||
+            district.includes("mysore") ||
+            name.includes("(ka)") ||
+            name.includes("karnataka") ||
+            name.includes("bengaluru"))
+        )
+          return true;
+        if (
+          searchState === "tamil-nadu" &&
+          (geography.includes("tamil") ||
+            name.includes("(tn)") ||
+            name.includes("tamil") ||
+            name.includes("chennai"))
+        )
+          return true;
+        if (
+          searchState === "andhra-pradesh" &&
+          (geography.includes("andhra") ||
+            name.includes("(ap)") ||
+            name.includes("andhra") ||
+            name.includes("vijayawada"))
+        )
+          return true;
+        if (
+          searchState === "telangana" &&
+          (geography.includes("telangana") ||
+            name.includes("(ts)") ||
+            name.includes("telangana") ||
+            name.includes("hyderabad"))
+        )
+          return true;
+        if (
+          searchState === "maharashtra" &&
+          (geography.includes("maharashtra") ||
+            name.includes("(mh)") ||
+            name.includes("maharashtra") ||
+            name.includes("mumbai") ||
+            name.includes("pune"))
+        )
+          return true;
 
-        if (searchState === "tamil-nadu" && (
-          geography.includes("tamil") ||
-          name.includes("(tn)") ||
-          name.includes("tamil") ||
-          name.includes("chennai")
-        )) return true;
-
-        if (searchState === "andhra-pradesh" && (
-          geography.includes("andhra") ||
-          name.includes("(ap)") ||
-          name.includes("andhra") ||
-          name.includes("vijayawada")
-        )) return true;
-
-        if (searchState === "telangana" && (
-          geography.includes("telangana") ||
-          name.includes("(ts)") ||
-          name.includes("telangana") ||
-          name.includes("hyderabad")
-        )) return true;
-
-        if (searchState === "maharashtra" && (
-          geography.includes("maharashtra") ||
-          name.includes("(mh)") ||
-          name.includes("maharashtra") ||
-          name.includes("mumbai") ||
-          name.includes("pune")
-        )) return true;
-
-        // General fallback
-        return name.includes(searchState.replace(/-/g, " ")) || geography.includes(searchState.replace(/-/g, " "));
+        return (
+          name.includes(searchState.replace(/-/g, " ")) ||
+          geography.includes(searchState.replace(/-/g, " "))
+        );
       });
     }
 
-    // 2. Branch Filter
     if (branchFilter && branchFilter !== "all") {
-      const selectedBranchObj = branches.find((b: any) => b.id === branchFilter);
-      if (selectedBranchObj) {
-        branches = [selectedBranchObj];
+      branches = branches.filter((b: any) => b.id === branchFilter);
+    }
+
+    // Capture valid branch names for employee filtering
+    // Normalize to lowercase for comparison, but keep original for display if needed
+    const allowedBranchNames = new Set(
+      branches
+        .map((b: any) =>
+          (
+            b.name ||
+            b.branch ||
+            b.branch_name ||
+            b.location ||
+            ""
+          ).trim(),
+        )
+        .filter((n: string) => n.length > 0),
+    );
+
+    // 3. Fetch Employees (Optimized)
+    // We only need specific columns for aggregation, not the whole row.
+    // 'branch_name' used for linking, 'gender' for stats, payroll fields for sums.
+    const empCols =
+      "branch_name, branchname, branch, location, gender, net_amount, net_salary, basic, hra, pf, employer_pf, esic, total_deductions";
+
+    // Construct query
+    let empQuery = supabase.from("man_power").select(empCols);
+
+    // Apply database-level filter if we have a reduced set of branches
+    // Note: If allowedBranchNames is HUGE, the URL might be too long.
+    // If it's "All", we skip this filter and fetch all.
+    const isFiltered = stateFilter !== "all" || branchFilter !== "all";
+
+    if (
+      isFiltered &&
+      allowedBranchNames.size > 0 &&
+      allowedBranchNames.size < 100
+    ) {
+      // If reasonable number of branches, filter in DB
+      empQuery = empQuery.in("branch_name", Array.from(allowedBranchNames));
+    }
+
+    // Fetch Data in Parallel (Employees, Branch Statuses, Registry)
+    const [empResult, branchStatusResult, registryResult] = await Promise.all([
+      empQuery,
+      supabase.from("branch_status").select("*"),
+      supabase.from("notice_tables_registry").select("table_name, display_name"),
+    ]);
+
+    let allEmployees: any[] = empResult.data || [];
+
+    // Filter employees in memory if we couldn't filter in DB (e.g. too many branches or fuzzy match needed)
+    if (isFiltered && allowedBranchNames.size >= 100) {
+      allEmployees = allEmployees.filter((emp: any) => {
+        const empBranch = (
+          emp.branch_name ||
+          emp.branchname ||
+          emp.branch ||
+          emp.Location ||
+          ""
+        ).trim();
+        return allowedBranchNames.has(empBranch); // Exact match check mostly
+      });
+    }
+
+    // 4. Handle Registry Tables (Dynamic) - Limit this if possible
+    // Only fetch if "All" is selected or if we really need them.
+    // For performance, we might want to skip this or optimize it heavily.
+    // We'll fetch them but only necessary columns.
+    if (registryResult.data && registryResult.data.length > 0) {
+      const registryPromises = registryResult.data.map(async (table) => {
+        try {
+          // Just fetch columns that map to our needs? most dynamic tables might not match schema.
+          // We'll fetch all but limit potential impact?
+          // Actually, the original code looked for 'branch_name' in them.
+          // Let's try to select specific columns if they exist, or * if we must.
+          // To be safe and compatible with dynamic schemas, we select * but typically these are small?
+          // If they are large, this loop is the bottleneck.
+          // We will filter by branch_name if column exists.
+          let q = supabase.from(table.table_name).select("*");
+          const { data } = await q;
+          return (data || []).map((row: any) => ({
+            ...row,
+            _source_table: table.table_name,
+            branch_name: row.branch_name || row.branch || row.location, // Normalize
+          }));
+        } catch (e) {
+          return [];
+        }
+      });
+
+      const dynamicRows = (await Promise.all(registryPromises)).flat();
+
+      // Filter dynamic rows
+      if (isFiltered) {
+        const filteredDynamic = dynamicRows.filter((row: any) => {
+          const b = (row.branch_name || "").trim();
+          return allowedBranchNames.has(b);
+        });
+        allEmployees = [...allEmployees, ...filteredDynamic];
+      } else {
+        allEmployees = [...allEmployees, ...dynamicRows];
       }
     }
 
-    // 3. Filter Employees based on remaining branches
-    if (branches.length > 0) {
-      // Create set of allowed branch names/identifiers from the filtered branches
-      const allowedBranchNames = new Set(
-        branches.map((b: any) => (b.name || b.branch || b.branch_name || b.location || "").toLowerCase().trim())
-          .filter((n: string) => n.length > 0)
-      );
-
-      allEmployees = allEmployees.filter((emp: any) => {
-        const empBranch = (emp.branch_name || emp.branchname || emp.branch || emp.Branch || emp.location || emp.Location || "").toString().toLowerCase().trim();
-        for (const allowedName of Array.from(allowedBranchNames)) {
-          if (empBranch === allowedName || empBranch.includes(allowedName) || allowedName.includes(empBranch)) return true;
-        }
-        return false;
-      });
-    } else if ((stateFilter && stateFilter !== "all") || (branchFilter && branchFilter !== "all")) {
-      // If filters are active but no branches match, show no employees
-      allEmployees = [];
-    }
-
-    console.log("Total employees after filter:", allEmployees.length);
-
-    // Fetch licenses from branch_status
-    const { data: branchStatuses, error: branchStatusError } = await supabase
-      .from("branch_status")
-      .select("*");
-
-    console.log("Branch statuses fetched:", branchStatuses?.length || 0, branchStatusError?.message || "no error");
-
-    // Calculate KPIs - use unique branch names from employees if branches table is empty
-    let totalBranches = branches?.length || 0;
-
-    // If no branches in table, derive from unique branch names in employee data
-    if (totalBranches === 0 && allEmployees.length > 0) {
-      const uniqueBranches = new Set<string>();
-      allEmployees.forEach((emp: any) => {
-        const branchName = emp.branch_name || emp.branchname || emp.branch ||
-          emp.Branch || emp.location || emp.Location;
-        if (branchName && branchName !== "Unknown") {
-          uniqueBranches.add(branchName);
-        }
-      });
-      totalBranches = uniqueBranches.size;
-    }
-
-    const activeBranches = totalBranches; // Assume all operating
-
-    const totalEmployees = allEmployees.length;
-
-    // Count by gender - check various possible column names
-    const maleCount = allEmployees.filter((e: any) => {
-      const gender = (e.gender || e.Gender || e.sex || e.Sex || "").toString().toLowerCase();
-      return gender === "male" || gender === "m";
-    }).length;
-
-    const femaleCount = allEmployees.filter((e: any) => {
-      const gender = (e.gender || e.Gender || e.sex || e.Sex || "").toString().toLowerCase();
-      return gender === "female" || gender === "f";
-    }).length;
-
-    // Calculate payroll - check various possible column names
+    // 5. Aggregate Data (In Memory)
+    let maleCount = 0;
+    let femaleCount = 0;
     let monthlyPayroll = 0;
     let employerContributions = 0;
     let basicTotal = 0;
     let hraTotal = 0;
     let pfTotal = 0;
     let deductionsTotal = 0;
+    let totalEmployees = allEmployees.length;
 
-    if (allEmployees.length > 0) {
-      allEmployees.forEach((emp: any) => {
-        // Try various column names for net amount
-        const netAmount = parseFloat(
-          emp.net_amount || emp.net_salary || emp.netamount || emp.netsalary ||
-          emp.salary || emp.Salary || emp.net || emp.Net || 0
+    const branchEmployeeCounts: Record<string, number> = {};
+
+    // Process employees loop once
+    for (const emp of allEmployees) {
+      // Gender
+      const gender = (
+        emp.gender ||
+        emp.Gender ||
+        emp.sex ||
+        ""
+      )
+        .toString()
+        .toLowerCase();
+      if (gender.startsWith("m")) maleCount++;
+      else if (gender.startsWith("f")) femaleCount++;
+
+      // Payroll
+      const net =
+        parseFloat(
+          emp.net_amount || emp.net_salary || emp.net || 0,
         ) || 0;
+      const basic =
+        parseFloat(emp.basic || emp.basic_salary || 0) || 0;
+      const hra =
+        parseFloat(emp.hra || emp.house_rent_allowance || 0) || 0;
+      const pf = parseFloat(emp.pf || emp.provident_fund || 0) || 0;
+      const ded =
+        parseFloat(emp.total_deductions || emp.deductions || 0) || 0;
+      const empPf = parseFloat(emp.employer_pf || 0) || 0;
+      const esic = parseFloat(emp.esic || emp.employer_esic || 0) || 0;
 
-        const basic = parseFloat(
-          emp.basic || emp.Basic || emp.basic_salary || emp.basicpay || 0
-        ) || 0;
+      monthlyPayroll += net;
+      employerContributions += empPf + esic;
+      basicTotal += basic;
+      hraTotal += hra;
+      pfTotal += pf;
+      deductionsTotal += ded;
 
-        const hra = parseFloat(
-          emp.hra || emp.HRA || emp.house_rent_allowance || 0
-        ) || 0;
-
-        const pf = parseFloat(
-          emp.pf || emp.PF || emp.provident_fund || emp.employer_pf || emp.epf || 0
-        ) || 0;
-
-        const employerPf = parseFloat(emp.employer_pf || emp.employerpf || 0) || 0;
-        const esic = parseFloat(emp.esic || emp.ESIC || emp.employer_esic || 0) || 0;
-        const deductions = parseFloat(emp.total_deductions || emp.deductions || emp.Deductions || 0) || 0;
-
-        monthlyPayroll += netAmount;
-        employerContributions += employerPf + esic;
-        basicTotal += basic;
-        hraTotal += hra;
-        pfTotal += pf;
-        deductionsTotal += deductions;
-      });
+      // Branch Counts
+      const bName = (
+        emp.branch_name ||
+        emp.branchname ||
+        emp.branch ||
+        emp.Location ||
+        "Unknown"
+      ).trim();
+      branchEmployeeCounts[bName] = (branchEmployeeCounts[bName] || 0) + 1;
     }
 
-    // Calculate manpower utilization from branches
+    // 6. Branch Summary & KPIs
+    const branchStatuses = branchStatusResult.data || [];
+    let totalBranches = branches.length;
+
+    // If we have no branches but have employees (data inconsistency fallback)
+    if (totalBranches === 0 && totalEmployees > 0) {
+      totalBranches = Object.keys(branchEmployeeCounts).length;
+    }
+
     let approvedManpower = 0;
-    let currentManpower = totalEmployees;
-
-    if (branches && branches.length > 0) {
-      approvedManpower = branches.reduce((sum: number, b: any) => {
-        const approved = parseInt(b.approved_manpower) || parseInt(b.sanctioned_strength) || 0;
-        return sum + approved;
-      }, 0);
-    }
-
-
-
-    const manpowerUtilization = approvedManpower > 0
-      ? Math.round((currentManpower / approvedManpower) * 100)
-      : 0;
-
-    // Compliance status based on branch_status or license_status
+    const branchSummary: BranchOverview[] = [];
     const today = new Date();
-    const sixMonthsFromNow = new Date(today);
-    sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+    const sixMonthsFromNow = new Date();
+    sixMonthsFromNow.setMonth(today.getMonth() + 6);
 
     let licensesExpiringSoon = 0;
     let complianceStatus: "all_active" | "warning" | "critical" = "all_active";
 
-    if (branchStatuses && branchStatuses.length > 0) {
-      branchStatuses.forEach((status: any) => {
-        const expiryDate = new Date(
-          status.renewed_upto || status.expiry_date || status.license_expiry || status.valid_upto
+    // Build Branch Summary
+    if (branches.length > 0) {
+      for (const b of branches) {
+        const bName = (b.branch || b.name || b.branch_name || "Branch").trim();
+        const approved = parseInt(
+          b.approved_manpower || b.sanctioned_strength || 0,
         );
-        if (!isNaN(expiryDate.getTime())) {
-          if (expiryDate < today) {
-            complianceStatus = "critical";
-            licensesExpiringSoon++;
-          } else if (expiryDate < sixMonthsFromNow) {
-            if (complianceStatus !== "critical") complianceStatus = "warning";
-            licensesExpiringSoon++;
-          }
-        }
-      });
-    }
+        approvedManpower += approved;
 
-    // Branch-wise employee count (for bar chart)
-    const branchEmployeeData: { branch: string; employees: number }[] = [];
-    const branchEmployeeCounts: Record<string, number> = {};
+        const current =
+          branchEmployeeCounts[bName] ||
+          parseInt(b.male || 0) + parseInt(b.female || 0) ||
+          parseInt(b.actual_manpower || 0);
 
-    if (allEmployees.length > 0) {
-      allEmployees.forEach((emp: any) => {
-        // Try various column names for branch
-        const branchName = emp.branch_name || emp.branchname || emp.branch ||
-          emp.Branch || emp.location || emp.Location || "Unknown";
-        branchEmployeeCounts[branchName] = (branchEmployeeCounts[branchName] || 0) + 1;
-      });
+        const utilization =
+          approved > 0 ? Math.round((current / approved) * 100) : 0;
 
-      Object.entries(branchEmployeeCounts).forEach(([branch, count]) => {
-        branchEmployeeData.push({ branch, employees: count });
-      });
-    }
-
-    // If no employee branch data, create from branches table
-    if (branchEmployeeData.length === 0 && branches && branches.length > 0) {
-      branches.forEach((b: any) => {
-        const branchName = b.name || b.branch_name || "Branch";
-        const actualCount = parseInt(b.actual_manpower) || 0;
-        branchEmployeeData.push({
-          branch: branchName,
-          employees: actualCount
-        });
-      });
-    }
-
-    // Gender distribution (for donut chart)
-    const genderDistribution = [
-      { name: "Male", value: maleCount, color: "#3b82f6" },
-      { name: "Female", value: femaleCount, color: "#ec4899" },
-    ];
-
-    // Payroll breakdown (for stacked bar)
-    const payrollBreakdown = [
-      { category: "Basic", amount: basicTotal || Math.round(monthlyPayroll * 0.5) },
-      { category: "HRA", amount: hraTotal || Math.round(monthlyPayroll * 0.2) },
-      { category: "PF", amount: pfTotal || Math.round(monthlyPayroll * 0.12) },
-      { category: "Deductions", amount: deductionsTotal || Math.round(monthlyPayroll * 0.08) },
-      { category: "Net", amount: monthlyPayroll },
-    ];
-
-    // Branch summary table
-    const branchSummary: BranchOverview[] = [];
-
-    if (branches && branches.length > 0) {
-      // Use actual branches table data (ka_branches or branches)
-      branches.forEach((b: any) => {
-        // ka_branches uses 'branch' column, regular branches uses 'name'
-        const branchName = b.branch || b.name || b.branch_name || "Branch";
-        const approved = parseInt(b.approved_manpower) || parseInt(b.sanctioned_strength) || 0;
-        // For ka_branches, calculate current from male + female, or use actual_manpower
-        const maleCount = parseInt(b.male) || 0;
-        const femaleCount = parseInt(b.female) || 0;
-        const actual = (maleCount + femaleCount) || parseInt(b.actual_manpower) || 0;
-        const current = branchEmployeeCounts[branchName] || actual;
-        const utilization = approved > 0 ? Math.round((current / approved) * 100) : 0;
-
-        // For ka_branches, license expiry is in renewed_upto column
+        // License Status
         let licenseStatus: "active" | "warning" | "expired" = "active";
         let licenseExpiry: string | undefined;
 
-        // Check renewed_upto from ka_branches first
-        if (b.renewed_upto) {
-          const expiryDate = new Date(b.renewed_upto);
-          if (!isNaN(expiryDate.getTime())) {
-            licenseExpiry = expiryDate.toISOString().split("T")[0];
-            if (expiryDate < today) {
-              licenseStatus = "expired";
-            } else if (expiryDate < sixMonthsFromNow) {
-              licenseStatus = "warning";
-            }
-          }
-        } else {
-          // Fallback to branch_status table
-          const branchLicenseStatus = branchStatuses?.find((l: any) =>
-            l.branch_id === b.id || l.branch_name === branchName || l.branch === branchName
+        let expiryDateStr = b.renewed_upto || b.valid_upto || b.expiry_date;
+        if (!expiryDateStr) {
+          const statusRecord = branchStatuses.find(
+            (s: any) =>
+              s.branch_id === b.id ||
+              s.branch_name === bName ||
+              s.branch === bName,
           );
+          if (statusRecord)
+            expiryDateStr = statusRecord.renewed_upto || statusRecord.valid_upto;
+        }
 
-          if (branchLicenseStatus) {
-            const expiryDate = new Date(
-              branchLicenseStatus.renewed_upto || branchLicenseStatus.expiry_date || branchLicenseStatus.valid_upto
-            );
-            if (!isNaN(expiryDate.getTime())) {
-              licenseExpiry = expiryDate.toISOString().split("T")[0];
-              if (expiryDate < today) {
-                licenseStatus = "expired";
-              } else if (expiryDate < sixMonthsFromNow) {
-                licenseStatus = "warning";
-              }
+        if (expiryDateStr) {
+          const exp = new Date(expiryDateStr);
+          if (!isNaN(exp.getTime())) {
+            licenseExpiry = exp.toISOString().split("T")[0];
+            if (exp < today) {
+              licenseStatus = "expired";
+              licensesExpiringSoon++;
+              complianceStatus = "critical";
+            } else if (exp < sixMonthsFromNow) {
+              licenseStatus = "warning";
+              licensesExpiringSoon++;
+              if (complianceStatus !== "critical") complianceStatus = "warning";
             }
           }
         }
 
         branchSummary.push({
-          id: b.id,
-          name: branchName,
+          id: b.id || bName,
+          name: bName,
           approved_manpower: approved,
           current_employees: current,
           utilization,
           license_status: licenseStatus,
           license_expiry: licenseExpiry,
         });
-      });
-    } else if (Object.keys(branchEmployeeCounts).length > 0) {
-      // Generate branch summary from employee branch data
-      Object.entries(branchEmployeeCounts).forEach(([branchName, count], index) => {
-        if (branchName === "Unknown") return;
-
-        // Estimate approved as 120% of current to show realistic utilization
-        const approved = Math.ceil(count * 1.2);
-        const utilization = approved > 0 ? Math.round((count / approved) * 100) : 0;
-
-        // Find related license status by branch name
-        const branchLicenseStatus = branchStatuses?.find((l: any) =>
-          l.branch_name === branchName || (l.branch && l.branch.includes(branchName))
-        );
-
-        let licenseStatus: "active" | "warning" | "expired" = "active";
-        let licenseExpiry: string | undefined;
-
-        if (branchLicenseStatus) {
-          const expiryDate = new Date(
-            branchLicenseStatus.renewed_upto || branchLicenseStatus.expiry_date || branchLicenseStatus.valid_upto
-          );
-          if (!isNaN(expiryDate.getTime())) {
-            licenseExpiry = expiryDate.toISOString().split("T")[0];
-            if (expiryDate < today) {
-              licenseStatus = "expired";
-            } else if (expiryDate < sixMonthsFromNow) {
-              licenseStatus = "warning";
-            }
-          }
-        }
-
+      }
+    } else {
+      // Fallback from calculated counts
+      Object.entries(branchEmployeeCounts).forEach(([bName, count], i) => {
         branchSummary.push({
-          id: `branch-${index}`,
-          name: branchName,
-          approved_manpower: approved,
+          id: `gen-${i}`,
+          name: bName,
+          approved_manpower: 0,
           current_employees: count,
-          utilization,
-          license_status: licenseStatus,
-          license_expiry: licenseExpiry,
+          utilization: 0,
+          license_status: "active",
         });
       });
-
-      // Sort by employee count descending
-      branchSummary.sort((a, b) => b.current_employees - a.current_employees);
     }
+
+    // Sort summary by employee count
+    branchSummary.sort((a, b) => b.current_employees - a.current_employees);
+
+    // Chart Data Construction
+    const branchEmployeeData = branchSummary.map((b) => ({
+      branch: b.name,
+      employees: b.current_employees,
+    }));
+    const genderDistribution = [
+      { name: "Male", value: maleCount, color: "#3b82f6" },
+      { name: "Female", value: femaleCount, color: "#ec4899" },
+    ];
+    const payrollBreakdown = [
+      {
+        category: "Basic",
+        amount: Math.round(basicTotal || monthlyPayroll * 0.5),
+      },
+      {
+        category: "HRA",
+        amount: Math.round(hraTotal || monthlyPayroll * 0.2),
+      },
+      {
+        category: "PF",
+        amount: Math.round(pfTotal || monthlyPayroll * 0.12),
+      },
+      {
+        category: "Deductions",
+        amount: Math.round(deductionsTotal || monthlyPayroll * 0.08),
+      },
+      { category: "Net", amount: Math.round(monthlyPayroll) },
+    ];
+
+    const currentManpower = totalEmployees;
+    const manpowerUtilization =
+      approvedManpower > 0
+        ? Math.round((currentManpower / approvedManpower) * 100)
+        : 0;
 
     const overviewData: OverviewData = {
       total_branches: totalBranches,
-      active_branches: activeBranches,
+      active_branches: totalBranches, // Assuming all active for now
       total_employees: totalEmployees,
       male_count: maleCount,
       female_count: femaleCount,
@@ -498,11 +445,31 @@ export async function GET(request: NextRequest) {
       last_updated: new Date().toISOString(),
     };
 
-    return NextResponse.json(overviewData);
+    return overviewData;
+  },
+  ["dashboard-overview-data"], // Cache key
+  { revalidate: 60, tags: ["dashboard"] }, // Revalidate every 60 seconds
+);
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+
+    // Filter parameters
+    const stateFilter = searchParams.get("state") || "all";
+    const branchFilter = searchParams.get("branch") || "all";
+
+    // Call cached function
+    const data = await getCachedDashboardData(stateFilter, branchFilter);
+
+    return NextResponse.json(data);
   } catch (error) {
     console.error("Dashboard overview API error:", error);
     return NextResponse.json(
-      { error: "Internal server error", details: error instanceof Error ? error.message : "Unknown error" },
+      {
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : "Unknown error",
+      },
       { status: 500 },
     );
   }
