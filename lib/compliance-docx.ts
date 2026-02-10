@@ -31,7 +31,8 @@ export async function convertDocxToPdf(docxBuffer: Buffer): Promise<Buffer | nul
     const convertAsync = require('util').promisify(libre.convert);
     const pdfBuffer = await convertAsync(docxBuffer, '.pdf', undefined);
     return Buffer.from(pdfBuffer);
-  } catch {
+  } catch (e) {
+    console.error('LibreOffice conversion error:', e);
     return null;
   }
 }
@@ -41,7 +42,8 @@ export async function processDocxTemplate(
   formId: string,
   branchData: Record<string, unknown> | null,
   manPowerData: Record<string, unknown>[],
-  formData: Record<string, unknown>
+  formData: Record<string, unknown>,
+  currentEmployee: Record<string, unknown> | null = null
 ): Promise<Buffer> {
   const content = fs.readFileSync(templatePath);
   const zip = new PizZip(content);
@@ -56,15 +58,27 @@ export async function processDocxTemplate(
   const context: Record<string, string> = {};
   Object.assign(context, rowToContext(branchData));
 
+  // If a specific employee is being processed, use their data
+  if (currentEmployee) {
+    Object.assign(context, rowToContext(currentEmployee));
+  }
+
+  // Still provide aggregates for branch-level tags
   if (manPowerData.length > 0) {
-    Object.assign(context, rowToContext(manPowerData[0]));
+    // Only set these if not already set by currentEmployee (though unlikely to conflict)
     const totalManPower = manPowerData.reduce((sum, emp) => sum + Number(emp?.man_power ?? 0), 0);
     const totalMale = manPowerData.filter((e) => String(e?.gender ?? '').toLowerCase() === 'male').length;
     const totalFemale = manPowerData.filter((e) => String(e?.gender ?? '').toLowerCase() === 'female').length;
-    context['total_man_power'] = String(totalManPower);
-    context['total_male_employees'] = String(totalMale);
-    context['total_female_employees'] = String(totalFemale);
-    context['total_employees'] = String(manPowerData.length);
+    
+    if (!context['total_man_power']) context['total_man_power'] = String(totalManPower);
+    if (!context['total_male_employees']) context['total_male_employees'] = String(totalMale);
+    if (!context['total_female_employees']) context['total_female_employees'] = String(totalFemale);
+    if (!context['total_employees']) context['total_employees'] = String(manPowerData.length);
+    
+    // Fallback: if no currentEmployee but we have data, maybe use the first one if it's a single return
+    if (!currentEmployee && manPowerData.length === 1) {
+      Object.assign(context, rowToContext(manPowerData[0]));
+    }
   }
 
   for (const [key, value] of Object.entries(formData)) {
@@ -148,6 +162,102 @@ export async function processDocxTemplate(
     compression: 'DEFLATE',
   });
   return buf as Buffer;
+}
+
+export async function mergeDocx(buffers: Buffer[]): Promise<Buffer> {
+  const validBuffers = buffers.filter(b => b.length > 0);
+  if (validBuffers.length === 0) throw new Error('No buffers to merge');
+  if (validBuffers.length === 1) return validBuffers[0];
+
+  const firstZip = new PizZip(validBuffers[0]);
+  const firstXml = firstZip.file('word/document.xml')?.asText();
+  if (!firstXml) throw new Error('Invalid DOCX: missing word/document.xml');
+
+  // Collect all unique namespaces from all docs
+  const allNamespaces = new Set<string>();
+  
+  // Helper to extract namespaces
+  const extractNamespaces = (xml: string) => {
+    const match = xml.match(/<w:document([^>]+)>/);
+    if (match && match[1]) {
+      const nsAttrs = match[1].match(/xmlns:[a-zA-Z0-9]+="[^"]*"/g);
+      if (nsAttrs) {
+        nsAttrs.forEach(ns => allNamespaces.add(ns));
+      }
+    }
+  };
+
+  extractNamespaces(firstXml);
+
+  let combinedBody = '';
+  let finalSectPr = '';
+
+  for (let i = 0; i < validBuffers.length; i++) {
+    const zip = new PizZip(validBuffers[i]);
+    const xml = zip.file('word/document.xml')?.asText();
+    if (!xml) continue;
+
+    if (i > 0) extractNamespaces(xml);
+
+    const bodyMatch = xml.match(/<w:body>([\s\S]*?)<\/w:body>/);
+    if (!bodyMatch) continue;
+
+    let bodyContent = bodyMatch[1];
+    
+    // Find the final <w:sectPr>
+    // Regex matches <w:sectPr ... /> OR <w:sectPr ...> ... </w:sectPr>
+    // We use a simplified approach: extract the last occurrence of <w:sectPr
+    const sectPrRegex = /<w:sectPr(?:[\s\S]*?<\/w:sectPr>|\s*\/?>)/g;
+    const matches = bodyContent.match(sectPrRegex);
+    const lastSectPr = matches ? matches[matches.length - 1] : '';
+
+    if (i < validBuffers.length - 1) {
+      if (lastSectPr) {
+        const lastIndex = bodyContent.lastIndexOf(lastSectPr);
+        if (lastIndex !== -1) {
+          // Check if w:type is present, if not add it
+          let modifiedSectPr = lastSectPr;
+          if (!modifiedSectPr.includes('<w:type')) {
+             modifiedSectPr = modifiedSectPr.replace('<w:sectPr', '<w:sectPr><w:type w:val="nextPage"/>');
+             if (lastSectPr.endsWith('/>')) {
+                modifiedSectPr = modifiedSectPr.replace('/>', '>');
+                modifiedSectPr += '</w:sectPr>';
+             }
+          }
+          
+          bodyContent = 
+            bodyContent.substring(0, lastIndex) + 
+            `<w:p><w:pPr>${modifiedSectPr}</w:pPr></w:p>` + 
+            bodyContent.substring(lastIndex + lastSectPr.length);
+        }
+      } else {
+        //If no sectPr found, add a manual page break
+        bodyContent += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+      }
+      combinedBody += bodyContent;
+    } else {
+      if (lastSectPr) {
+        const lastIndex = bodyContent.lastIndexOf(lastSectPr);
+        if (lastIndex !== -1) {
+          bodyContent = 
+            bodyContent.substring(0, lastIndex) + 
+            bodyContent.substring(lastIndex + lastSectPr.length);
+          finalSectPr = lastSectPr;
+        }
+      }
+      combinedBody += bodyContent;
+    }
+  }
+
+  const namespaceString = Array.from(allNamespaces).join(' ');
+  const finalXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document ${namespaceString}><w:body>${combinedBody}${finalSectPr}</w:body></w:document>`;
+  
+  (firstZip as any).file('word/document.xml', finalXml);
+  
+  return (firstZip as any).generate({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+  }) as Buffer;
 }
 
 export function getTemplatePath(formId: string, formsDir: string = FORMS_DIR): string | null {

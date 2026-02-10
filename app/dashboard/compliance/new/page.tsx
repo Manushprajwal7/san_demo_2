@@ -25,7 +25,9 @@ import {
 import ComplianceFormWizard from "@/components/compliance/compliance-form-wizard";
 import DynamicFormRenderer from "@/components/compliance/dynamic-form-renderer";
 import { SHOP_ESTABLISHMENT_FORMS } from "@/lib/form-templates";
-import { FileText, Download, CheckCircle, ArrowRight, Mail } from "lucide-react";
+import { FileText, Download, CheckCircle, ArrowRight, Mail, FileDown } from "lucide-react";
+import { downloadComplianceFormsPDF } from "@/lib/pdf-generator";
+import { useToast } from "@/hooks/use-toast";
 
 interface ComplianceData {
   state: string;
@@ -54,29 +56,72 @@ export default function NewCompliancePage() {
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
+  const [generatedBlob, setGeneratedBlob] = useState<{ blob: Blob; filename: string } | null>(null);
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const { toast } = useToast();
+
+  const handleDownloadPDF = async () => {
+    if (!complianceData) return;
+    
+    setIsDownloadingPdf(true);
+    try {
+      const result = await downloadComplianceFormsPDF({
+        complianceId: complianceData.id,
+        act: complianceData.act,
+        forms: complianceData.forms,
+        branchId: complianceData.branch, // Use branch name as identifier
+        formData: {
+          state: complianceData.state,
+          district: complianceData.district,
+          branch: complianceData.branch,
+          submittedAt: complianceData.submittedAt,
+        }
+      });
+      
+      const isPdf = result.contentType.includes('pdf');
+      
+      toast({
+        title: isPdf ? "Success" : "PDF Generation Failed",
+        description: isPdf ? "PDF downloaded successfully" : "Server missing LibreOffice. Downloaded Word document instead.",
+        variant: isPdf ? "default" : "warning",
+      });
+    } catch (error) {
+      console.error('Error downloading PDF:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to download PDF",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   const handleComplianceSubmit = async (data: any) => {
     setIsGenerating(true);
+    setGeneratedBlob(null); // Reset previous generation
     
     try {
-      // Here you would typically submit to your backend
+      // First submit compliance data
       const response = await fetch('/api/compliance', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
 
       if (response.ok) {
         const result = await response.json();
-        setComplianceData({
+        const newCompliance = {
           ...data,
           actName: COMPLIANCE_ACTS.find(act => act.id === data.act)?.name || data.act,
           submittedAt: new Date().toISOString(),
           id: result.id || `COMP-${Date.now()}`
-        });
-        setShowForms(true);
+        };
+        setComplianceData(newCompliance);
+        
+        // Trigger generation but don't save yet
+        await generateFormsInBackground(newCompliance);
+        setShowForms(false); 
       } else {
         throw new Error('Failed to submit compliance');
       }
@@ -86,6 +131,51 @@ export default function NewCompliancePage() {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const generateFormsInBackground = async (data: ComplianceData) => {
+    try {
+      const response = await fetch('/api/compliance/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          complianceId: data.id,
+          act: data.act,
+          forms: data.forms,
+          formData: { ...formData, branch: data.branch, state: data.state, district: data.district },
+          branch: data.branch,
+          state: data.state,
+          district: data.district,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to generate forms');
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition');
+      const match = disposition?.match(/filename="?([^";\n]+)"?/);
+      const filename = match ? match[1].trim() : `Form_${data.forms?.[0] ?? 'compliance'}_${data.id}.docx`;
+      
+      setGeneratedBlob({ blob, filename });
+    } catch (error) {
+      console.error('Error generating forms:', error);
+      alert('Failed to generate forms within background process.');
+    }
+  };
+
+  const handleDownloadGenerated = () => {
+    if (!generatedBlob) return;
+    const url = URL.createObjectURL(generatedBlob.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = generatedBlob.filename;
+    document.body.appendChild(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    document.body.removeChild(a);
   };
 
   const handleSaveForms = async (formData: Record<string, any>) => {
@@ -125,21 +215,22 @@ export default function NewCompliancePage() {
     alert('Preview functionality would show the filled forms');
   };
 
-  const handleDownloadForms = async () => {
-    if (!complianceData) return;
+  // Kept for backward compatibility or direct download needs
+  const handleDownloadFormsDirect = async (data: ComplianceData) => {
+    if (!data) return;
 
     try {
       const response = await fetch('/api/compliance/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          complianceId: complianceData.id,
-          act: complianceData.act,
-          forms: complianceData.forms,
-          formData: { ...formData, branch: complianceData.branch, state: complianceData.state, district: complianceData.district },
-          branch: complianceData.branch,
-          state: complianceData.state,
-          district: complianceData.district,
+          complianceId: data.id,
+          act: data.act,
+          forms: data.forms,
+          formData: { ...formData, branch: data.branch, state: data.state, district: data.district },
+          branch: data.branch,
+          state: data.state,
+          district: data.district,
         }),
       });
 
@@ -151,7 +242,7 @@ export default function NewCompliancePage() {
       const blob = await response.blob();
       const disposition = response.headers.get('Content-Disposition');
       const match = disposition?.match(/filename="?([^";\n]+)"?/);
-      const filename = match ? match[1].trim() : `Form_${complianceData.forms?.[0] ?? 'compliance'}_${complianceData.id}.docx`;
+      const filename = match ? match[1].trim() : `Form_${data.forms?.[0] ?? 'compliance'}_${data.id}.docx`;
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -166,10 +257,19 @@ export default function NewCompliancePage() {
     }
   };
 
+  const handleDownloadForms = async () => {
+    if (generatedBlob) {
+      handleDownloadGenerated();
+    } else if (complianceData) {
+      await handleDownloadFormsDirect(complianceData);
+    }
+  };
+
   const handleReset = () => {
     setComplianceData(null);
     setShowForms(false);
     setFormData({});
+    setGeneratedBlob(null);
   };
 
   const handleOpenEmailModal = () => {
@@ -182,20 +282,24 @@ export default function NewCompliancePage() {
 
   const handleSendEmail = async () => {
     if (!complianceData) return;
-    const email = emailRecipient.trim();
-    if (!email) {
-      setEmailError("Please enter recipient email.");
+    const recipients = emailRecipient.split(',').map(e => e.trim()).filter(Boolean);
+    
+    if (recipients.length === 0) {
+      setEmailError("Please enter at least one recipient email.");
       return;
     }
-    if (!isValidEmail(email)) {
-      setEmailError("Please enter a valid email address.");
+
+    const invalidEmails = recipients.filter(email => !isValidEmail(email));
+    if (invalidEmails.length > 0) {
+      setEmailError(`Invalid email(s): ${invalidEmails.join(', ')}`);
       return;
     }
-    const formId = emailFormId || complianceData.forms?.[0];
-    if (!formId) {
-      setEmailError("No form selected.");
-      return;
-    }
+
+    // If a specific form is selected in the dropdown, send only that. 
+    // If not, we might want to send everything (merged doc). 
+    // For now, let's assume if emailFormId is set, use it; otherwise let backend handle (send all).
+    const formIdToSend = emailFormId || undefined; 
+
     setSendingEmail(true);
     setEmailError(null);
     setEmailSuccess(null);
@@ -206,8 +310,9 @@ export default function NewCompliancePage() {
         body: JSON.stringify({
           complianceId: complianceData.id,
           act: complianceData.act,
-          formId,
-          recipientEmail: email,
+          forms: complianceData.forms, // Send all forms by default context
+          formId: formIdToSend, // Optional single form override
+          recipientEmail: emailRecipient, // Send the raw string, backend splits it too
           formData: { ...formData, branch: complianceData.branch, state: complianceData.state, district: complianceData.district },
           branch: complianceData.branch,
           actName: complianceData.actName,
@@ -221,6 +326,8 @@ export default function NewCompliancePage() {
       setEmailSuccess(data.message || "Email sent successfully.");
       setTimeout(() => {
         setEmailModalOpen(false);
+        setEmailRecipient("");
+        setEmailFormId("");
       }, 2000);
     } catch (err) {
       setEmailError(err instanceof Error ? err.message : "Failed to send email.");
@@ -249,175 +356,202 @@ export default function NewCompliancePage() {
         <div className="max-w-7xl mx-auto">
           {!complianceData ? (
             <ComplianceFormWizard onSubmit={handleComplianceSubmit} />
-          ) : !showForms ? (
-            <Card className="p-8">
-              <div className="text-center">
-                <div className="mb-6">
-                  <CheckCircle className="h-16 w-16 text-green-600 mx-auto mb-4" />
-                </div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-4">
-                  Compliance Setup Complete!
-                </h1>
-                
-                <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6 text-left">
-                  <h2 className="text-lg font-semibold text-gray-900 mb-4">Compliance Summary</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="font-medium text-gray-600">State:</span>
-                      <span className="ml-2 text-gray-900">{complianceData.state}</span>
+          ) : (
+            <>
+              {!showForms ? (
+                <Card className="p-8">
+                  <div className="text-center">
+                    <div className="mb-6">
+                      <CheckCircle className="h-16 w-16 text-green-600 mx-auto mb-4" />
                     </div>
-                    <div>
-                      <span className="font-medium text-gray-600">District:</span>
-                      <span className="ml-2 text-gray-900">{complianceData.district}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-600">Branch:</span>
-                      <span className="ml-2 text-gray-900">{complianceData.branch}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-600">Compliance Act:</span>
-                      <span className="ml-2 text-gray-900">{complianceData.actName}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-600">Selected Forms:</span>
-                      <div className="ml-2 mt-2">
-                        <div className="flex flex-wrap gap-2">
-                          {complianceData.forms.map((formId) => (
-                            <Badge key={formId} variant="default" className="bg-blue-600 text-white">
-                              Form {formId}
-                            </Badge>
-                          ))}
+                    <h1 className="text-3xl font-bold text-gray-900 mb-4">
+                      Compliance Setup Complete!
+                    </h1>
+                    
+                    <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6 text-left">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-4">Compliance Summary</h2>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium text-gray-600">State:</span>
+                          <span className="ml-2 text-gray-900">{complianceData.state}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">District:</span>
+                          <span className="ml-2 text-gray-900">{complianceData.district}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">Branch:</span>
+                          <span className="ml-2 text-gray-900">{complianceData.branch}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">Compliance Act:</span>
+                          <span className="ml-2 text-gray-900">{complianceData.actName}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">Selected Forms:</span>
+                          <div className="ml-2 mt-2">
+                            <div className="flex flex-wrap gap-2">
+                              {complianceData.forms.map((formId) => (
+                                <Badge key={formId} variant="default" className="bg-blue-600 text-white">
+                                  Form {formId}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">Submission ID:</span>
+                          <span className="ml-2 text-gray-900">{complianceData.id}</span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-gray-600">Submitted At:</span>
+                          <span className="ml-2 text-gray-900">
+                            {new Date(complianceData.submittedAt).toLocaleString()}
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <span className="font-medium text-gray-600">Submission ID:</span>
-                      <span className="ml-2 text-gray-900">{complianceData.id}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-gray-600">Submitted At:</span>
-                      <span className="ml-2 text-gray-900">
-                        {new Date(complianceData.submittedAt).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
 
-                <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button
-                    onClick={() => setShowForms(true)}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    <FileText className="mr-2 h-4 w-4" />
-                    Fill Forms
-                  </Button>
-                  <Button
-                    onClick={handleReset}
-                    variant="outline"
-                  >
-                    <ArrowRight className="mr-2 h-4 w-4" />
-                    Create New Compliance
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          ) : (
-            <div className="space-y-6">
-              {/* Header */}
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h1 className="text-2xl font-bold text-gray-900">
-                        Fill Compliance Forms
-                      </h1>
-                      <p className="text-gray-600 mt-1">
-                        {complianceData.actName} - {complianceData.forms.length} forms
-                      </p>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant="outline" className="text-sm">
-                        ID: {complianceData.id}
-                      </Badge>
+                    <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                      {/* <Button
+                        onClick={handleDownloadPDF}
+                        disabled={isDownloadingPdf}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        {isDownloadingPdf ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        ) : (
+                          <FileDown className="mr-2 h-4 w-4" />
+                        )}
+                        Download PDF
+                      </Button> */}
                       <Button
                         onClick={handleDownloadForms}
-                        disabled={Object.keys(formData).length === 0}
-                        variant="outline"
+                        disabled={!generatedBlob}
+                        className="bg-green-600 hover:bg-green-700 text-white"
                       >
                         <Download className="mr-2 h-4 w-4" />
-                        Download
+                        {generatedBlob ? "Download Word" : "Generating..."}
                       </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Dynamic Form Renderer */}
-              <DynamicFormRenderer
-                templates={complianceData.act === 'shop_establishment' ? SHOP_ESTABLISHMENT_FORMS : {}}
-                selectedForms={complianceData.forms}
-                complianceData={complianceData}
-                onSave={handleSaveForms}
-                onPreview={handlePreviewForms}
-              />
-
-              {/* Action Buttons */}
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex flex-col gap-4">
-                    <div className="flex justify-between flex-wrap gap-3">
                       <Button
-                        onClick={handleReset}
+                        onClick={handleOpenEmailModal}
                         variant="outline"
                       >
-                        <ArrowRight className="mr-2 h-4 w-4" />
-                        Start New Compliance
+                        <Mail className="mr-2 h-4 w-4" />
+                        Send via Email
                       </Button>
-                      <div className="flex flex-wrap gap-3">
-                        <Button
-                          onClick={() => setShowForms(false)}
-                          variant="outline"
-                        >
-                          Back to Summary
-                        </Button>
-                        <Button
-                          onClick={handleDownloadForms}
-                          disabled={Object.keys(formData).length === 0}
-                          className="bg-green-600 hover:bg-green-700 text-white"
-                        >
-                          <Download className="mr-2 h-4 w-4" />
-                          Download All Forms
-                        </Button>
-                        <Button
-                          onClick={handleOpenEmailModal}
-                          disabled={Object.keys(formData).length === 0}
-                          variant="outline"
-                        >
-                          <Mail className="mr-2 h-4 w-4" />
-                          Send Form via Mail
-                        </Button>
-                      </div>
+                      <Button
+                        onClick={handleReset}
+                        variant="ghost"
+                      >
+                        <ArrowRight className="mr-2 h-4 w-4" />
+                        Create New Compliance
+                      </Button>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+                </Card>
+              ) : (
+                <div className="space-y-6">
+                  {/* Header */}
+                  <Card>
+                    <CardContent className="p-6">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h1 className="text-2xl font-bold text-gray-900">
+                            Fill Compliance Forms
+                          </h1>
+                          <p className="text-gray-600 mt-1">
+                            {complianceData.actName} - {complianceData.forms.length} forms
+                          </p>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Badge variant="outline" className="text-sm">
+                            ID: {complianceData.id}
+                          </Badge>
+                          <Button
+                            onClick={handleDownloadForms}
+                            disabled={Object.keys(formData).length === 0}
+                            variant="outline"
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Download
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Dynamic Form Renderer */}
+                  <DynamicFormRenderer
+                    templates={complianceData.act === 'shop_establishment' ? SHOP_ESTABLISHMENT_FORMS : {}}
+                    selectedForms={complianceData.forms}
+                    complianceData={complianceData}
+                    onSave={handleSaveForms}
+                    onPreview={handlePreviewForms}
+                  />
+
+                  {/* Action Buttons */}
+                  <Card>
+                    <CardContent className="p-6">
+                      <div className="flex flex-col gap-4">
+                        <div className="flex justify-between flex-wrap gap-3">
+                          <Button
+                            onClick={() => {
+                              handleReset();
+                              setShowForms(false);
+                              setComplianceData(null);
+                            }}
+                          >
+                            <ArrowRight className="mr-2 h-4 w-4" />
+                            Start New Compliance
+                          </Button>
+                          <div className="flex flex-wrap gap-3">
+                            <Button
+                              onClick={() => setShowForms(false)}
+                              variant="outline"
+                            >
+                              Back to Summary
+                            </Button>
+                            <Button
+                              onClick={handleDownloadForms}
+                              disabled={Object.keys(formData).length === 0}
+                              className="bg-green-600 hover:bg-green-700 text-white"
+                            >
+                              <Download className="mr-2 h-4 w-4" />
+                              Download All Forms
+                            </Button>
+                            <Button
+                              onClick={handleOpenEmailModal}
+                              disabled={Object.keys(formData).length === 0}
+                              variant="outline"
+                            >
+                              <Mail className="mr-2 h-4 w-4" />
+                              Send Form via Mail
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
 
               {/* Send Form via Mail Dialog */}
               <Dialog open={emailModalOpen} onOpenChange={setEmailModalOpen}>
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader>
-                    <DialogTitle>Send Form via Mail</DialogTitle>
+                    <DialogTitle>Send Forms via Email</DialogTitle>
                     <DialogDescription>
-                      Enter recipient email. The selected form will be sent as a PDF attachment (DOCX is not sent).
+                      Enter recipient email(s), separated by comma. The generated forms will be sent as an attachment.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="email-recipient">Recipient email</Label>
+                      <Label htmlFor="email-recipient">Recipient Email(s)</Label>
                       <Input
                         id="email-recipient"
                         type="email"
-                        placeholder="recipient@example.com"
+                        placeholder="recipient1@example.com, recipient2@example.com"
                         value={emailRecipient}
                         onChange={(e) => {
                           setEmailRecipient(e.target.value);
@@ -427,12 +561,13 @@ export default function NewCompliancePage() {
                     </div>
                     {complianceData && complianceData.forms?.length > 1 && (
                       <div className="grid gap-2">
-                        <Label>Form to send</Label>
+                        <Label>Form to send (Optional)</Label>
                         <Select value={emailFormId} onValueChange={setEmailFormId}>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select form" />
+                            <SelectValue placeholder="Send All Forms" />
                           </SelectTrigger>
                           <SelectContent>
+                            <SelectItem value="">All Forms (Merged)</SelectItem>
                             {complianceData.forms.map((f) => (
                               <SelectItem key={f} value={f}>
                                 Form {f}
@@ -461,12 +596,12 @@ export default function NewCompliancePage() {
                       onClick={handleSendEmail}
                       disabled={sendingEmail}
                     >
-                      {sendingEmail ? "Sending…" : "Send PDF"}
+                      {sendingEmail ? "Sending..." : "Send Email"}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
-            </div>
+            </>
           )}
         </div>
       </main>

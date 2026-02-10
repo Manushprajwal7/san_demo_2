@@ -27,6 +27,18 @@ const INDIAN_STATES = [
   "Chandigarh", "Puducherry"
 ];
 
+const KARNATAKA_DISTRICTS = [
+  "Bagalkot", "Ballari (Bellary)", "Belagavi (Belgaum)", "Bengaluru Rural", 
+  "Bengaluru Urban", "Bidar", "Chamarajanagar", "Chikballapur", 
+  "Chikkamagaluru (Chikmagalur)", "Chitradurga", "Dakshina Kannada (South Canara)", 
+  "Davanagere", "Dharwad", "Gadag", "Hassan", "Haveri", 
+  "Kalaburagi (Gulbarga)", "Kodagu (Coorg)", "Kolar", "Koppal", 
+  "Mandya", "Mysuru (Mysore)", "Raichur", "Ramanagara", 
+  "Shivamogga (Shimoga)", "Tumakuru (Tumkur)", "Udupi", 
+  "Uttara Kannada (North Canara)", "Vijayapura (Bijapur)", 
+  "Vijayanagara (New district, carved from Ballari in 2020)", "Yadgir"
+];
+
 const COMPLIANCE_ACTS = [
   { id: "shop_establishment", name: "Shop and Establishment Act", forms: getRegisteredFormIds() },
   { id: "bocw", name: "BOCW", forms: [] },
@@ -69,23 +81,26 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
 
   const selectedAct = COMPLIANCE_ACTS.find(act => act.id === formData.act);
 
-  // Fetch Karnataka branches when component mounts or state changes to Karnataka
+  // Fetch branches when state or district changes
   useEffect(() => {
-    const fetchKarnatakaBranches = async () => {
-      if (formData.state === "Karnataka") {
+    const fetchBranches = async () => {
+      if (formData.state === "Karnataka" && formData.district) {
         setLoadingBranches(true);
         try {
-          const response = await fetch('/api/employees?table=ka_branches');
+          // Normalize district name if it contains bracket info (e.g. "Ballari (Bellary)")
+          const normalizedDistrict = formData.district.split(" (")[0];
+          const response = await fetch(`/api/employees?table=ka_branches&district=${encodeURIComponent(normalizedDistrict)}`);
+          
           if (response.ok) {
             const data = await response.json();
             const branches = data.employees?.map((branch: any) => branch.branch) || [];
             // Remove duplicates and filter out empty values
-            const uniqueBranches = [...new Set(branches.filter(Boolean))];
+            const uniqueBranches = [...new Set(branches.filter(Boolean))] as string[];
             setKarnatakaBranches(uniqueBranches);
           } else {
             toast({
               title: "Error",
-              description: "Failed to load Karnataka branches",
+              description: "Failed to load branches",
               variant: "destructive",
             });
           }
@@ -93,7 +108,7 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
           console.error('Error fetching branches:', error);
           toast({
             title: "Error",
-            description: "Failed to load Karnataka branches",
+            description: "Failed to load branches",
             variant: "destructive",
           });
         } finally {
@@ -102,8 +117,8 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
       }
     };
 
-    fetchKarnatakaBranches();
-  }, [formData.state, toast]);
+    fetchBranches();
+  }, [formData.state, formData.district, toast]);
 
   // Update available forms when act changes
   useEffect(() => {
@@ -231,31 +246,23 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
           <div className="space-y-4">
             <h3 className="text-lg font-semibold mb-4">Select District in {formData.state}</h3>
             {formData.state === "Karnataka" ? (
-              <div>
-                {loadingBranches ? (
-                  <div className="text-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-gray-600">Loading Karnataka branches...</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {karnatakaBranches.map((branch) => (
-                      <Button
-                        key={branch}
-                        variant={formData.district === branch ? "default" : "outline"}
-                        className="h-12 justify-start"
-                        onClick={() => handleDistrictChange(branch)}
-                      >
-                        {branch}
-                      </Button>
-                    ))}
-                  </div>
-                )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {KARNATAKA_DISTRICTS.map((district) => (
+                  <Button
+                    key={district}
+                    variant={formData.district === district ? "default" : "outline"}
+                    className="h-12 justify-start overflow-hidden text-ellipsis whitespace-nowrap"
+                    title={district}
+                    onClick={() => handleDistrictChange(district)}
+                  >
+                    {district}
+                  </Button>
+                ))}
               </div>
             ) : (
               <div className="text-center py-8">
                 <p className="text-gray-600">District selection is currently available for Karnataka only.</p>
-                <p className="text-sm text-gray-500 mt-2">Please select Karnataka as the state to see available districts/branches.</p>
+                <p className="text-sm text-gray-500 mt-2">Please select Karnataka as the state to see available districts.</p>
               </div>
             )}
           </div>
@@ -274,16 +281,29 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {karnatakaBranches.map((branch) => (
-                      <Button
-                        key={branch}
-                        variant={formData.branch === branch ? "default" : "outline"}
-                        className="h-12 justify-start"
-                        onClick={() => handleBranchChange(branch)}
-                      >
-                        {branch}
-                      </Button>
-                    ))}
+                    {karnatakaBranches.length > 0 ? (
+                      karnatakaBranches.map((branch) => (
+                        <Button
+                          key={branch}
+                          variant={formData.branch === branch ? "default" : "outline"}
+                          className="h-12 justify-start"
+                          onClick={() => handleBranchChange(branch)}
+                        >
+                          {branch}
+                        </Button>
+                      ))
+                    ) : (
+                      <div className="col-span-full text-center py-4">
+                        <p className="text-gray-500 italic">No specific branches found for this district. You can proceed without selecting a branch or go back.</p>
+                        <Button 
+                          variant="ghost" 
+                          className="mt-2 text-blue-600"
+                          onClick={() => handleBranchChange("General")}
+                        >
+                          Use "General" Branch
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -434,13 +454,8 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
             </div>
           </div>
 
-          {/* Step Content */}
-          <div className="min-h-[400px]">
-            {renderStepContent()}
-          </div>
-
           {/* Navigation Buttons */}
-          <div className="flex justify-between mt-8 pt-6 border-t">
+          <div className="flex justify-between mb-8 pb-6 border-b">
             <Button
               variant="outline"
               onClick={prevStep}
@@ -457,9 +472,14 @@ export default function ComplianceFormWizard({ onSubmit }: ComplianceFormWizardP
             ) : (
               <Button onClick={handleSubmit} disabled={formData.forms.length === 0}>
                 <Download className="mr-2 h-4 w-4" />
-                Generate Compliance Forms
+                Auto-fill & Download Forms
               </Button>
             )}
+          </div>
+
+          {/* Step Content */}
+          <div className="min-h-[400px]">
+            {renderStepContent()}
           </div>
 
           {/* Summary */}

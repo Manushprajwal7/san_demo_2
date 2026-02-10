@@ -38,6 +38,8 @@ import {
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import * as XLSX from "xlsx";
+import ClientPDFGenerator from "@/components/compliance/client-pdf-generator";
+import { FileText } from "lucide-react";
 
 interface KABranch {
   id: string;
@@ -93,6 +95,7 @@ export default function KABranchesViewer({ company }: KABranchesViewerProps) {
   const [geographyFilter, setGeographyFilter] = useState("all");
   const [asmFilter, setAsmFilter] = useState("all");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [showPdfGenerator, setShowPdfGenerator] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -360,6 +363,14 @@ export default function KABranchesViewer({ company }: KABranchesViewerProps) {
               KA Branches Management
             </CardTitle>
             <div className="flex flex-wrap gap-2">
+              <Button 
+                variant="outline" 
+                className="bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
+                onClick={() => setShowPdfGenerator(true)}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Generate Forms
+              </Button>
               <Button variant="outline" onClick={exportToPDF}>
                 <Download className="h-4 w-4 mr-2" />
                 Export PDF
@@ -593,6 +604,23 @@ export default function KABranchesViewer({ company }: KABranchesViewerProps) {
           )}
         </CardContent>
       </Card>
+
+      {showPdfGenerator && (
+        <ClientPDFGenerator
+          employees={filteredBranches.map(branch => ({
+            id: branch.id,
+            name: branch.name_of_the_manager || branch.branch,
+            department: branch.geography,
+            position: branch.designation,
+            email: branch.email_id,
+            phone: branch.contact_no,
+            branch: branch.branch,
+            manager: branch.sales_head
+          }))}
+          formType="code_of_conduct" // Default form type
+          onClose={() => setShowPdfGenerator(false)}
+        />
+      )}
     </div>
   );
 }

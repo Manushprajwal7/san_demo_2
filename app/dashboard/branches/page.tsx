@@ -14,7 +14,7 @@ export default function BranchesPage() {
         <div className="max-w-7xl mx-auto">
           <div className="mb-8">
             <h1 className="text-4xl font-bold text-gray-900 mb-2">
-              KA Branches Management
+              Branch Management
             </h1>
             <p className="text-gray-600 text-lg">
               View and manage all Karnataka branches with advanced filtering and reporting capabilities

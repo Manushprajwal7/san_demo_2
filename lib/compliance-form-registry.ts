@@ -19,6 +19,7 @@ export const COMPLIANCE_FORM_REGISTRY: Record<string, string> = {
   'Q': 'form_Q.docx',
   'R': 'form_R.docx',
   'T': 'form_T.docx',
+  'first_page': 'first_page.docx',
 };
 
 export function getTemplateFileName(formId: string): string | null {

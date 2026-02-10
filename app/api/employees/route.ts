@@ -217,9 +217,18 @@ export async function GET(request: NextRequest) {
     }
 
     // Optimized query with select only necessary columns and better indexing hint
-    const { data, count, error } = await supabase
+    let query = supabase
       .from(tableName)
-      .select("*", { count: "exact" })
+      .select("*", { count: "exact" });
+
+    // Add filtering based on other search parameters
+    searchParams.forEach((value, key) => {
+      if (!['table', 'chunk', 'chunkSize', 'offset', 'limit'].includes(key)) {
+        query = query.eq(key, value);
+      }
+    });
+
+    const { data, count, error } = await query
       .range(from, to)
       .order('id', { ascending: true }); // Add ordering for consistent pagination
 

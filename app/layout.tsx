@@ -16,7 +16,6 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "HRMS - Human Resource Management System",
   description: "Enterprise HRMS Platform for Sangeetha Mobiles and AMPL",
-  generator: "v0.app",
   icons: {
     icon: [
       {

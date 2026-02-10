@@ -1,127 +1,121 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { DashboardHeader } from "@/components/dashboard-header";
-import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   downloadCompliancePDF,
   previewCompliancePDF,
+  downloadComplianceFormsPDF
 } from "@/lib/pdf-generator";
-import { FileDown, Eye } from "lucide-react";
+import {
+  FileDown,
+  Eye,
+  FileText,
+  Scale,
+  Building2,
+  Activity,
+  RefreshCw,
+  Plus,
+  Loader2,
+} from "lucide-react";
 
-interface Compliance {
+interface ComplianceSubmission {
   id: string;
-  name: string;
-  description: string;
-  dueDate: string;
-  status: "pending" | "submitted" | "approved" | "rejected";
-  department: string;
-  submittedOn?: string;
-  approvedOn?: string;
-  notes?: string;
+  state?: string;
+  district?: string;
+  branch?: string;
+  act?: string;
+  forms?: string[];
+  submitted_at?: string;
+  status?: string;
+  company_id?: number;
+  created_at?: string;
+}
+
+interface DashboardData {
+  totalSubmissions: number;
+  byStatus: Record<string, number>;
+  formsCount: number;
+  actsCount: number;
+  branchesCount: number;
+  actNames: Record<string, string>;
+  recentActivity: ComplianceSubmission[];
+  submissions: ComplianceSubmission[];
 }
 
 export default function CompliancePage() {
   const { user } = useAuth();
-  const [complianceList] = useState<Compliance[]>([
-    {
-      id: "COMP-001",
-      name: "Annual Compliance Report",
-      description: "Submit annual compliance and audit report",
-      dueDate: "2024-03-31",
-      status: "submitted",
-      department: "Finance",
-      submittedOn: "2024-03-25",
-      approvedOn: "2024-03-28",
-    },
-    {
-      id: "COMP-002",
-      name: "Employee Training Records",
-      description: "Update employee training and certification records",
-      dueDate: "2024-02-29",
-      status: "approved",
-      department: "HR",
-      submittedOn: "2024-02-20",
-      approvedOn: "2024-02-22",
-    },
-    {
-      id: "COMP-003",
-      name: "Safety Audit Report",
-      description: "Conduct and submit safety audit for all departments",
-      dueDate: "2024-03-15",
-      status: "pending",
-      department: "Operations",
-    },
-    {
-      id: "COMP-004",
-      name: "Data Privacy Compliance",
-      description: "Submit GDPR and data privacy compliance documentation",
-      dueDate: "2024-03-10",
-      status: "rejected",
-      department: "IT",
-      notes:
-        "Missing employee consent forms. Please resubmit with complete documentation.",
-    },
-    {
-      id: "COMP-005",
-      name: "Statutory Compliance Filing",
-      description: "File statutory compliance documents with government",
-      dueDate: "2024-04-30",
-      status: "pending",
-      department: "Legal",
-    },
-    {
-      id: "COMP-006",
-      name: "Environmental Compliance",
-      description:
-        "Submit environmental compliance and waste management report",
-      dueDate: "2024-04-15",
-      status: "pending",
-      department: "Operations",
-    },
-  ]);
-
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedCompliance, setSelectedCompliance] =
-    useState<Compliance | null>(null);
+    useState<ComplianceSubmission | null>(null);
   const [showUploadForm, setShowUploadForm] = useState(false);
 
-  const handleExportPDF = (compliance: Compliance, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent opening the modal
-
-    const pdfData = {
-      id: compliance.id,
-      state: "Karnataka", // You can make this dynamic
-      district: "Bangalore Urban",
-      taluk: "Bangalore North",
-      employee: "System User",
-      forms: [compliance.name],
-      submittedAt: compliance.submittedOn || new Date().toISOString(),
-    };
-
-    downloadCompliancePDF(pdfData);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  
+  const fetchDashboard = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/compliance/dashboard");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load dashboard");
+      setDashboard(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load dashboard");
+      setDashboard(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handlePreviewPDF = (compliance: Compliance, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent opening the modal
+  useEffect(() => {
+    fetchDashboard();
+  }, []);
 
+  const getActName = (actId?: string) =>
+    (actId && dashboard?.actNames?.[actId]) || actId || "—";
+
+  const handleExportPDF = async (row: ComplianceSubmission, e: React.MouseEvent) => {
+    e.stopPropagation(); // Avoid row click
+    if (!row.id) return;
+    try {
+      setDownloadingId(row.id);
+      await downloadComplianceFormsPDF({
+        complianceId: row.id,
+        act: row.act || '',
+        forms: row.forms || [],
+        branchId: row.branch || ''
+      });
+    } catch (err) {
+      console.error(err);
+      alert('Failed to download PDF. Please try again later.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handlePreviewPDF = (row: ComplianceSubmission, e: React.MouseEvent) => {
+    e.stopPropagation();
     const pdfData = {
-      id: compliance.id,
-      state: "Karnataka",
-      district: "Bangalore Urban",
-      taluk: "Bangalore North",
-      employee: "System User",
-      forms: [compliance.name],
-      submittedAt: compliance.submittedOn || new Date().toISOString(),
+      id: row.id,
+      state: row.state ?? "Karnataka",
+      district: row.district ?? "—",
+      taluk: "—",
+      employee: "—",
+      forms: Array.isArray(row.forms) ? row.forms : [getActName(row.act)],
+      submittedAt: row.submitted_at ?? new Date().toISOString(),
     };
-
     previewCompliancePDF(pdfData);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
+  const getStatusColor = (status?: string) => {
+    const s = (status ?? "generated").toLowerCase();
+    switch (s) {
       case "pending":
         return "bg-yellow-50 border-l-4 border-yellow-500 text-yellow-900";
       case "submitted":
@@ -131,12 +125,13 @@ export default function CompliancePage() {
       case "rejected":
         return "bg-red-50 border-l-4 border-red-500 text-red-900";
       default:
-        return "bg-gray-50 border-l-4 border-gray-500";
+        return "bg-blue-50 border-l-4 border-blue-500 text-blue-900";
     }
   };
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
+  const getStatusBadge = (status?: string) => {
+    const s = (status ?? "generated").toLowerCase();
+    switch (s) {
       case "pending":
         return "bg-yellow-100 text-yellow-800";
       case "submitted":
@@ -146,33 +141,46 @@ export default function CompliancePage() {
       case "rejected":
         return "bg-red-100 text-red-800";
       default:
-        return "bg-gray-100 text-gray-800";
+        return "bg-blue-100 text-blue-800";
     }
   };
 
-  const isOverdue = (dueDate: string) => new Date(dueDate) < new Date();
-
-  const getDaysUntilDue = (dueDate: string) => {
-    const due = new Date(dueDate);
-    const today = new Date();
-    const diff = due.getTime() - today.getTime();
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    return days;
+  const formatDate = (dateStr?: string) => {
+    if (!dateStr) return "—";
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString(undefined, {
+        dateStyle: "medium",
+      });
+    } catch {
+      return dateStr;
+    }
   };
 
-  const stats = {
-    total: complianceList.length,
-    pending: complianceList.filter((c) => c.status === "pending").length,
-    approved: complianceList.filter((c) => c.status === "approved").length,
-    rejected: complianceList.filter((c) => c.status === "rejected").length,
-  };
+  if (loading && !dashboard) {
+    return (
+      <div className="flex-1 flex flex-col">
+        <DashboardHeader />
+        <main className="flex-1 p-8 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-10 w-10 animate-spin text-gray-500" />
+            <p className="text-gray-600">Loading compliance dashboard…</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const submissions = dashboard?.submissions ?? [];
+  const recentActivity = dashboard?.recentActivity ?? [];
+  const byStatus = dashboard?.byStatus ?? {};
 
   return (
     <div className="flex-1 flex flex-col">
       <DashboardHeader />
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto space-y-8">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
                 Compliance Management
@@ -181,130 +189,227 @@ export default function CompliancePage() {
                 Track and manage regulatory compliance submissions
               </p>
             </div>
-            <Button
-              className="bg-gray-700 hover:bg-gray-800 text-white"
-              onClick={() =>
-                (window.location.href = "/dashboard/compliance/new")
-              }
-            >
-              New Compliance
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchDashboard}
+                disabled={loading}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+                />
+                Refresh
+              </Button>
+              <Button
+                className="bg-gray-700 hover:bg-gray-800 text-white"
+                onClick={() => (window.location.href = "/dashboard/compliance/new")}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Compliance
+              </Button>
+            </div>
           </div>
 
-          {/* Compliance Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {error && (
+            <Card className="p-4 bg-red-50 border-red-200 text-red-800">
+              {error}
+            </Card>
+          )}
+
+          {/* Stats: Total, Forms, Acts, Branches */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="p-6 bg-gray-50">
-              <p className="text-gray-600 text-sm">Total Items</p>
-              <p className="text-3xl font-bold text-gray-600 mt-2">
-                {stats.total}
-              </p>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-gray-200">
+                  <FileText className="h-5 w-5 text-gray-600" />
+                </div>
+                <div>
+                  <p className="text-gray-600 text-sm">Total Submissions</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {dashboard?.totalSubmissions ?? 0}
+                  </p>
+                </div>
+              </div>
             </Card>
-            <Card className="p-6 bg-yellow-50">
-              <p className="text-gray-600 text-sm">Pending</p>
-              <p className="text-3xl font-bold text-yellow-600 mt-2">
-                {stats.pending}
-              </p>
+            <Card className="p-6 bg-blue-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-blue-200">
+                  <FileText className="h-5 w-5 text-blue-700" />
+                </div>
+                <div>
+                  <p className="text-gray-600 text-sm">Forms Available</p>
+                  <p className="text-2xl font-bold text-blue-900">
+                    {dashboard?.formsCount ?? 0}
+                  </p>
+                </div>
+              </div>
             </Card>
-            <Card className="p-6 bg-green-50">
-              <p className="text-gray-600 text-sm">Approved</p>
-              <p className="text-3xl font-bold text-green-600 mt-2">
-                {stats.approved}
-              </p>
+            <Card className="p-6 bg-indigo-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-indigo-200">
+                  <Scale className="h-5 w-5 text-indigo-700" />
+                </div>
+                <div>
+                  <p className="text-gray-600 text-sm">Compliance Acts</p>
+                  <p className="text-2xl font-bold text-indigo-900">
+                    {dashboard?.actsCount ?? 0}
+                  </p>
+                </div>
+              </div>
             </Card>
-            <Card className="p-6 bg-red-50">
-              <p className="text-gray-600 text-sm">Rejected</p>
-              <p className="text-3xl font-bold text-red-600 mt-2">
-                {stats.rejected}
-              </p>
+            <Card className="p-6 bg-emerald-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-emerald-200">
+                  <Building2 className="h-5 w-5 text-emerald-700" />
+                </div>
+                <div>
+                  <p className="text-gray-600 text-sm">Branches</p>
+                  <p className="text-2xl font-bold text-emerald-900">
+                    {dashboard?.branchesCount ?? 0}
+                  </p>
+                </div>
+              </div>
             </Card>
           </div>
 
-          {/* Compliance List */}
-          <Card className="overflow-hidden">
-            <div className="divide-y divide-gray-200">
-              {complianceList.map((compliance) => {
-                const daysUntil = getDaysUntilDue(compliance.dueDate);
-                const overdue = isOverdue(compliance.dueDate);
-
-                return (
-                  <div
-                    key={compliance.id}
-                    className={`p-6 ${getStatusColor(
-                      compliance.status,
-                    )} cursor-pointer hover:opacity-90 transition-opacity`}
-                    onClick={() => setSelectedCompliance(compliance)}
+          {/* Status breakdown */}
+          {Object.keys(byStatus).length > 0 && (
+            <Card className="p-6">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                Submissions by status
+              </h2>
+              <div className="flex flex-wrap gap-3">
+                {Object.entries(byStatus).map(([status, count]) => (
+                  <span
+                    key={status}
+                    className={`px-3 py-1.5 rounded-full text-sm font-medium ${getStatusBadge(status)}`}
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-lg font-bold">
-                            {compliance.name}
+                    {status.charAt(0).toUpperCase() + status.slice(1)}: {count}
+                  </span>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* Recent activity */}
+          <Card className="overflow-hidden">
+            <div className="p-4 border-b border-gray-200 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-gray-600" />
+              <h2 className="text-lg font-semibold text-gray-900">
+                Recent activity
+              </h2>
+            </div>
+            <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+              {recentActivity.length === 0 ? (
+                <div className="p-6 text-center text-gray-500">
+                  No recent submissions. Create one from New Compliance.
+                </div>
+              ) : (
+                recentActivity.map((row) => (
+                  <div
+                    key={row.id}
+                    className="p-4 hover:bg-gray-50 flex items-center justify-between gap-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">
+                        {getActName(row.act)} — {row.branch ?? "—"}
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        {row.state ?? "—"} · {row.district ?? "—"} ·{" "}
+                        {formatDate(row.submitted_at)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusBadge(row.status)}`}
+                      >
+                        {row.status ?? "generated"}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setSelectedCompliance(row)}
+                      >
+                        View
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
+
+          {/* Submissions list */}
+          <Card className="overflow-hidden">
+            <div className="p-4 border-b border-gray-200">
+              <h2 className="text-lg font-semibold text-gray-900">
+                All submissions
+              </h2>
+              <p className="text-sm text-gray-500 mt-1">
+                {submissions.length} submission{submissions.length !== 1 ? "s" : ""} in total
+              </p>
+            </div>
+            <div className="divide-y divide-gray-200">
+              {submissions.length === 0 ? (
+                <div className="p-12 text-center text-gray-500">
+                  No compliance submissions yet. Use &quot;New Compliance&quot; to create and generate forms.
+                </div>
+              ) : (
+                submissions.map((row) => (
+                  <div
+                    key={row.id}
+                    className={`p-6 ${getStatusColor(row.status)} cursor-pointer hover:opacity-90 transition-opacity`}
+                    onClick={() => setSelectedCompliance(row)}
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <h3 className="text-lg font-bold text-gray-900">
+                            {getActName(row.act)}
                           </h3>
                           <span
-                            className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(
-                              compliance.status,
-                            )}`}
+                            className={`px-3 py-1 rounded-full text-xs font-semibold ${getStatusBadge(row.status)}`}
                           >
-                            {compliance.status.charAt(0).toUpperCase() +
-                              compliance.status.slice(1)}
+                            {(row.status ?? "generated").charAt(0).toUpperCase() +
+                              (row.status ?? "generated").slice(1)}
                           </span>
                         </div>
-                        <p className="text-sm mb-3">{compliance.description}</p>
+                        <p className="text-sm text-gray-600 mb-3">
+                          {row.state ?? "—"} · {row.district ?? "—"} · Branch:{" "}
+                          {row.branch ?? "—"}
+                        </p>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div>
-                            <p className="opacity-75">Department</p>
-                            <p className="font-medium">
-                              {compliance.department}
-                            </p>
+                            <p className="opacity-75">State</p>
+                            <p className="font-medium">{row.state ?? "—"}</p>
                           </div>
                           <div>
-                            <p className="opacity-75">Due Date</p>
-                            <p
-                              className={`font-medium ${
-                                overdue && compliance.status === "pending"
-                                  ? "text-red-600"
-                                  : ""
-                              }`}
-                            >
-                              {compliance.dueDate}
-                              {compliance.status === "pending" && (
-                                <span
-                                  className={`block text-xs mt-1 ${
-                                    overdue ? "text-red-600" : ""
-                                  }`}
-                                >
-                                  {overdue
-                                    ? `Overdue by ${-daysUntil} days`
-                                    : `${daysUntil} days remaining`}
-                                </span>
-                              )}
+                            <p className="opacity-75">District</p>
+                            <p className="font-medium">{row.district ?? "—"}</p>
+                          </div>
+                          <div>
+                            <p className="opacity-75">Branch</p>
+                            <p className="font-medium">{row.branch ?? "—"}</p>
+                          </div>
+                          <div>
+                            <p className="opacity-75">Submitted</p>
+                            <p className="font-medium">
+                              {formatDate(row.submitted_at)}
                             </p>
                           </div>
-                          {compliance.submittedOn && (
-                            <div>
-                              <p className="opacity-75">Submitted</p>
-                              <p className="font-medium">
-                                {compliance.submittedOn}
-                              </p>
-                            </div>
-                          )}
-                          {compliance.approvedOn && (
-                            <div>
-                              <p className="opacity-75">Approved</p>
-                              <p className="font-medium">
-                                {compliance.approvedOn}
-                              </p>
-                            </div>
-                          )}
                         </div>
+                        {Array.isArray(row.forms) && row.forms.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-2">
+                            Forms: {row.forms.join(", ")}
+                          </p>
+                        )}
                       </div>
-
-                      {/* PDF Export Buttons */}
-                      <div className="flex gap-2 ml-4">
+                      <div className="flex gap-2 shrink-0">
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={(e) => handlePreviewPDF(compliance, e)}
+                          onClick={(e) => handlePreviewPDF(row, e)}
                           className="hover:bg-white/50"
                         >
                           <Eye className="h-4 w-4" />
@@ -312,36 +417,36 @@ export default function CompliancePage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={(e) => handleExportPDF(compliance, e)}
+                          onClick={(e) => handleExportPDF(row, e)}
                           className="hover:bg-white/50"
                         >
-                          <FileDown className="h-4 w-4" />
+                          <FileDown className={`h-4 w-4 ${downloadingId === row.id ? 'animate-bounce' : ''}`} />
                         </Button>
                       </div>
                     </div>
                   </div>
-                );
-              })}
+                ))
+              )}
             </div>
           </Card>
 
-          {/* Compliance Details Modal */}
+          {/* Detail modal */}
           {selectedCompliance && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
-              <Card className="w-full max-w-2xl">
+              <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
                 <div className="p-8">
                   <div className="flex items-start justify-between mb-6">
                     <div>
                       <h2 className="text-2xl font-bold text-gray-900">
-                        {selectedCompliance.name}
+                        {getActName(selectedCompliance.act)}
                       </h2>
                       <span
-                        className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold mt-2 ${getStatusBadge(
-                          selectedCompliance.status,
-                        )}`}
+                        className={`inline-flex px-3 py-1 rounded-full text-xs font-semibold mt-2 ${getStatusBadge(selectedCompliance.status)}`}
                       >
-                        {selectedCompliance.status.charAt(0).toUpperCase() +
-                          selectedCompliance.status.slice(1)}
+                        {(selectedCompliance.status ?? "generated")
+                          .charAt(0)
+                          .toUpperCase() +
+                          (selectedCompliance.status ?? "generated").slice(1)}
                       </span>
                     </div>
                     <button
@@ -352,118 +457,90 @@ export default function CompliancePage() {
                     </button>
                   </div>
 
-                  <div className="space-y-4 mb-6">
-                    <p className="text-gray-600">
-                      {selectedCompliance.description}
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-gray-50 rounded-lg">
-                        <p className="text-sm text-gray-600">Department</p>
-                        <p className="font-medium text-gray-900 mt-1">
-                          {selectedCompliance.department}
-                        </p>
-                      </div>
-                      <div className="p-4 bg-gray-50 rounded-lg">
-                        <p className="text-sm text-gray-600">Due Date</p>
-                        <p className="font-medium text-gray-900 mt-1">
-                          {selectedCompliance.dueDate}
-                        </p>
-                      </div>
-                      {selectedCompliance.submittedOn && (
-                        <div className="p-4 bg-gray-50 rounded-lg">
-                          <p className="text-sm text-gray-600">Submitted On</p>
-                          <p className="font-medium text-gray-900 mt-1">
-                            {selectedCompliance.submittedOn}
-                          </p>
-                        </div>
-                      )}
-                      {selectedCompliance.approvedOn && (
-                        <div className="p-4 bg-gray-50 rounded-lg">
-                          <p className="text-sm text-gray-600">Approved On</p>
-                          <p className="font-medium text-gray-900 mt-1">
-                            {selectedCompliance.approvedOn}
-                          </p>
-                        </div>
-                      )}
+                  <div className="grid grid-cols-2 gap-4 mb-6">
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">ID</p>
+                      <p className="font-medium text-gray-900 mt-1">
+                        {selectedCompliance.id}
+                      </p>
                     </div>
-
-                    {selectedCompliance.notes && (
-                      <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                        <p className="font-medium text-red-900 mb-2">
-                          Feedback:
-                        </p>
-                        <p className="text-red-800 text-sm">
-                          {selectedCompliance.notes}
-                        </p>
-                      </div>
-                    )}
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">State</p>
+                      <p className="font-medium text-gray-900 mt-1">
+                        {selectedCompliance.state ?? "—"}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">District</p>
+                      <p className="font-medium text-gray-900 mt-1">
+                        {selectedCompliance.district ?? "—"}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">Branch</p>
+                      <p className="font-medium text-gray-900 mt-1">
+                        {selectedCompliance.branch ?? "—"}
+                      </p>
+                    </div>
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <p className="text-sm text-gray-600">Submitted</p>
+                      <p className="font-medium text-gray-900 mt-1">
+                        {formatDate(selectedCompliance.submitted_at)}
+                      </p>
+                    </div>
+                    {Array.isArray(selectedCompliance.forms) &&
+                      selectedCompliance.forms.length > 0 && (
+                        <div className="p-4 bg-gray-50 rounded-lg col-span-2">
+                          <p className="text-sm text-gray-600">Forms</p>
+                          <p className="font-medium text-gray-900 mt-1">
+                            {selectedCompliance.forms.join(", ")}
+                          </p>
+                        </div>
+                      )}
                   </div>
 
-                  {selectedCompliance.status === "pending" && (
-                    <div className="flex gap-3 justify-end">
-                      <Button
-                        variant="outline"
-                        onClick={() => setSelectedCompliance(null)}
-                      >
-                        Close
-                      </Button>
-                      <Button
-                        onClick={() => setShowUploadForm(true)}
-                        className="bg-gray-700 hover:bg-gray-800 text-white"
-                      >
-                        Submit Documents
-                      </Button>
-                    </div>
-                  )}
-                  {selectedCompliance.status !== "pending" && (
+                  <div className="flex gap-3 justify-end">
                     <Button
+                      variant="outline"
                       onClick={() => setSelectedCompliance(null)}
-                      className="w-full bg-gray-300 text-gray-700"
                     >
                       Close
                     </Button>
-                  )}
+                    <Button
+                      variant="outline"
+                      onClick={(e) => handlePreviewPDF(selectedCompliance, e)}
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      Preview PDF
+                    </Button>
+                    <Button
+                      className="bg-gray-700 hover:bg-gray-800 text-white"
+                      onClick={(e) => handleExportPDF(selectedCompliance, e)}
+                    >
+                      <FileDown className={`h-4 w-4 mr-2 ${downloadingId === selectedCompliance.id ? 'animate-bounce' : ''}`} />
+                      {downloadingId === selectedCompliance.id ? 'Downloading...' : 'Download PDF'}
+                    </Button>
+                  </div>
                 </div>
               </Card>
             </div>
           )}
 
-          {/* Upload Form Modal */}
+          {/* Upload form modal (placeholder) */}
           {showUploadForm && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
               <Card className="w-full max-w-md">
                 <div className="p-8">
                   <h2 className="text-2xl font-bold text-gray-900 mb-6">
-                    Submit Documents
+                    Submit documents
                   </h2>
-
                   <div className="space-y-6">
                     <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-gray-400">
-                      <div className="text-4xl mb-3">+</div>
-                      <p className="font-medium text-gray-900">
-                        Click to upload files
+                      <p className="text-sm text-gray-500">
+                        Upload flow can be wired to your backend here.
                       </p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        or drag and drop
-                      </p>
-                      <p className="text-xs text-gray-500 mt-2">
-                        PDF, DOC, DOCX, XLS, XLSX
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Comments (Optional)
-                      </label>
-                      <textarea
-                        rows={3}
-                        placeholder="Add any comments or notes about this submission..."
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg"
-                      />
                     </div>
                   </div>
-
                   <div className="flex gap-3 mt-8 justify-end">
                     <Button
                       variant="outline"
@@ -478,7 +555,7 @@ export default function CompliancePage() {
                       }}
                       className="bg-gray-700 hover:bg-gray-800 text-white"
                     >
-                      Submit
+                      Close
                     </Button>
                   </div>
                 </div>

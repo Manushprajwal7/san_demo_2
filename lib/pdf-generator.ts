@@ -187,10 +187,63 @@ export function previewCompliancePDF(data: ComplianceData): void {
   window.open(url, "_blank");
 }
 
+
 /**
  * Get compliance PDF as blob
  */
 export function getCompliancePDFBlob(data: ComplianceData): Blob {
   const doc = generateCompliancePDF(data);
   return doc.output("blob");
+}
+
+/**
+ * Download generated compliance forms (PDF/ZIP) from backend
+ */
+export async function downloadComplianceFormsPDF(data: {
+  complianceId: string;
+  act: string;
+  forms: string[];
+  branchId: string;
+  formData?: Record<string, any>;
+}): Promise<{ contentType: string }> {
+  const response = await fetch('/api/compliance/generate-pdfs', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      complianceId: data.complianceId,
+      act: data.act,
+      forms: data.forms,
+      branchId: data.branchId,
+      formData: data.formData,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || 'Failed to generate PDF');
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition');
+  let filename = `Compliance_Forms_${data.complianceId}.pdf`;
+  
+  if (disposition) {
+    const match = disposition.match(/filename="?([^";\n]+)"?/);
+    if (match) {
+      filename = match[1];
+    }
+  }
+
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+
+  return { contentType: response.headers.get('Content-Type') || '' };
 }
