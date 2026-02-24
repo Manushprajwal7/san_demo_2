@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { dbCache, getCachedCompanyId } from '@/lib/database-cache'
+import { withMetrics } from '@/lib/api-metrics'
 
 const CACHE_TTL = 2 * 60 * 1000 // 2 minutes
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/calendar', async (request: NextRequest) => {
   const { searchParams } = new URL(request.url)
   const company = searchParams.get('company')
 
@@ -50,9 +51,9 @@ export async function GET(request: NextRequest) {
     console.error('Calendar API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/calendar', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient()
     const body = await request.json()
@@ -82,4 +83,4 @@ export async function POST(request: NextRequest) {
     console.error('Calendar POST error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})

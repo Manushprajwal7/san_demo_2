@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
 import { getRegisteredFormIds } from '@/lib/compliance-form-registry';
 import { dbCache } from '@/lib/database-cache';
+import { withMetrics } from '@/lib/api-metrics';
 
 const COMPLIANCE_ACT_IDS = [
   'shop_establishment',
@@ -55,7 +56,7 @@ export interface ComplianceDashboardData {
 
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET() {
+export const GET = withMetrics('/api/compliance/dashboard', async () => {
   try {
     // Check cache
     const cacheKey = 'compliance_dashboard';
@@ -126,4 +127,4 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+})

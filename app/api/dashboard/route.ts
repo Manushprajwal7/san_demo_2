@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { dbCache } from '@/lib/database-cache'
+import { withMetrics } from '@/lib/api-metrics'
 
 const CACHE_TTL = 60 * 1000 // 1 minute
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/dashboard', async (request: NextRequest) => {
   const { searchParams } = new URL(request.url)
   const company = searchParams.get('company')
 
@@ -94,4 +95,4 @@ export async function GET(request: NextRequest) {
     console.error('Dashboard API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { dbCache } from "@/lib/database-cache";
+import { withMetrics } from "@/lib/api-metrics";
 
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/enhanced-dashboard', async (request: NextRequest) => {
   // Check cache first
   const cacheKey = "enhanced_dashboard";
   const cached = dbCache.get(cacheKey);
@@ -233,4 +234,4 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+})

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { dbCache } from "@/lib/database-cache";
+import { withMetrics } from "@/lib/api-metrics";
 
 const TABLE_NAME = "employees";
 const DEFAULT_LIMIT = 1000;
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/employees/data', async (request: NextRequest) => {
   try {
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1", 10);
@@ -56,9 +57,9 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/employees/data', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const body = await request.json();
@@ -105,4 +106,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})

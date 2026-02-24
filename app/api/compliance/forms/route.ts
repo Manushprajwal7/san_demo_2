@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerSupabaseClient } from '@/lib/supabase';
+import { withMetrics } from '@/lib/api-metrics';
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/compliance/forms', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const body = await request.json();
@@ -50,9 +51,9 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/compliance/forms', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const { searchParams } = new URL(request.url);
@@ -90,4 +91,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})

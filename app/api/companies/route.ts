@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { dbCache } from "@/lib/database-cache";
+import { withMetrics } from '@/lib/api-metrics';
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes (companies rarely change)
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/companies', async (request: NextRequest) => {
   const supabase = createServerSupabaseClient();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
@@ -54,9 +55,9 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/companies', async (request: NextRequest) => {
   const supabase = createServerSupabaseClient();
   try {
     const body = await request.json();
@@ -85,4 +86,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});

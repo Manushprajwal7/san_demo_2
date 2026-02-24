@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase";
 import { dbCache, getCachedCompanyId } from "@/lib/database-cache";
+import { withMetrics } from '@/lib/api-metrics';
 
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/licenses', async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const company = searchParams.get("company");
 
@@ -50,9 +51,9 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/licenses', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const body = await request.json();
@@ -83,9 +84,9 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withMetrics('/api/licenses', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const body = await request.json();
@@ -112,9 +113,9 @@ export async function PATCH(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function DELETE(request: NextRequest) {
+export const DELETE = withMetrics('/api/licenses', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const { searchParams } = new URL(request.url);
@@ -144,4 +145,4 @@ export async function DELETE(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
