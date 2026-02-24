@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServerSupabaseClient } from '@/lib/supabase'
+import { dbCache } from '@/lib/database-cache'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-)
+const CACHE_TTL = 60 * 1000 // 1 minute
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -14,58 +12,84 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Company parameter required' }, { status: 400 })
   }
 
+  // Check cache first
+  const cacheKey = `dashboard:${company.toUpperCase()}`
+  const cached = dbCache.get(cacheKey)
+  if (cached) {
+    return NextResponse.json(cached)
+  }
+
   try {
+    const supabase = createServerSupabaseClient()
+
     // Fetch company
-    const { data: companies, error: companyError } = await supabase
+    const { data: companyData, error: companyError } = await supabase
       .from('companies')
-      .select('*')
+      .select('id')
       .eq('code', company.toUpperCase())
       .single()
 
-    if (companyError || !companies) {
+    if (companyError || !companyData) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
 
-    const companyId = companies.id
+    const companyId = companyData.id
 
-    // Fetch licenses
-    const { data: licenses } = await supabase
-      .from('license_status')
-      .select('*')
-      .eq('company_id', companyId)
+    // Parallelize all data fetches
+    const [licensesResult, branchesResult, employeesResult] = await Promise.all([
+      supabase
+        .from('license_status')
+        .select('id, status')
+        .eq('company_id', companyId),
+      supabase
+        .from('branches')
+        .select('id, name, location, approved_manpower, actual_manpower, total_salary')
+        .eq('company_id', companyId),
+      supabase
+        .from('employees')
+        .select('gender, salary')
+        .eq('company_id', companyId),
+    ])
 
-    // Fetch branches
-    const { data: branches } = await supabase
-      .from('branches')
-      .select('*')
-      .eq('company_id', companyId)
+    const licenses = licensesResult.data || []
+    const branches = branchesResult.data || []
+    const employees = employeesResult.data || []
 
-    // Fetch employees
-    const { data: employees } = await supabase
-      .from('employees')
-      .select('*')
-      .eq('company_id', companyId)
+    // Single-pass aggregation
+    let maleCount = 0
+    let femaleCount = 0
+    let totalSalary = 0
 
-    // Calculate statistics
-    const maleCount = employees?.filter((e: any) => e.gender === 'Male').length || 0
-    const femaleCount = employees?.filter((e: any) => e.gender === 'Female').length || 0
-    const totalSalary = employees?.reduce((sum: number, e: any) => sum + (e.salary || 0), 0) || 0
-
-    const licenseStatusCounts = {
-      active: licenses?.filter((l: any) => l.status === 'Active').length || 0,
-      expiring: licenses?.filter((l: any) => l.status === 'Expiring Soon').length || 0,
-      expired: licenses?.filter((l: any) => l.status === 'Expired').length || 0,
+    for (const e of employees) {
+      if (e.gender === 'Male') maleCount++
+      else if (e.gender === 'Female') femaleCount++
+      totalSalary += e.salary || 0
     }
 
-    return NextResponse.json({
-      licenses: licenses || [],
-      branches: branches || [],
-      employees: employees?.length || 0,
+    let active = 0
+    let expiring = 0
+    let expired = 0
+
+    for (const l of licenses) {
+      if (l.status === 'Active') active++
+      else if (l.status === 'Expiring Soon') expiring++
+      else if (l.status === 'Expired') expired++
+    }
+
+    const result = {
+      licenses,
+      branches,
+      employees: employees.length,
       maleCount,
       femaleCount,
       totalSalary,
-      licenseStatusCounts,
-    })
+      licenseStatusCounts: { active, expiring, expired },
+    }
+
+    // Cache the result
+    dbCache.set(cacheKey, result, CACHE_TTL)
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Dashboard API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

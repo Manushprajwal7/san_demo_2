@@ -109,3 +109,26 @@ export const invalidateAllTableCaches = (): void => {
     .filter(key => key.startsWith('table_'))
     .forEach(key => dbCache.delete(key));
 };
+
+// Company lookup cache (companies rarely change)
+const COMPANY_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+export const getCachedCompanyId = async (
+  supabase: any,
+  companyCode: string,
+): Promise<{ id: string } | null> => {
+  const cacheKey = `company:${companyCode.toUpperCase()}`;
+  const cached = dbCache.get<{ id: string }>(cacheKey);
+  if (cached) return cached;
+
+  const { data, error } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('code', companyCode.toUpperCase())
+    .single();
+
+  if (error || !data) return null;
+
+  dbCache.set(cacheKey, data, COMPANY_CACHE_TTL);
+  return data;
+};
