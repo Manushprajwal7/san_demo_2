@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
-);
+// Helper to get a service role client dynamically
+function getServiceSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+    process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    }
+  );
+}
 
 export async function GET(request: NextRequest) {
+  const supabase = getServiceSupabase();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
 
@@ -42,6 +52,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const supabase = getServiceSupabase();
   try {
     const body = await request.json();
     const { name, code } = body;
@@ -55,7 +66,11 @@ export async function POST(request: NextRequest) {
       .select();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+       // Debugging: check if key is actually present
+       if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+           console.error("Missing SUPABASE_SERVICE_ROLE_KEY in POST /api/companies");
+       }
+       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
     return NextResponse.json(data);

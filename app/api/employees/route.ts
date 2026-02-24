@@ -216,6 +216,21 @@ export async function GET(request: NextRequest) {
       pageSize = limit;
     }
 
+    // Generate cache key based on all parameters
+    const queryKey = JSON.stringify({
+      tableName,
+      from,
+      to,
+      params: Object.fromEntries(searchParams.entries())
+    });
+    const cacheKey = `table_data:${queryKey}`;
+    
+    // Check cache
+    const cachedData = dbCache.get(cacheKey);
+    if (cachedData) {
+      return NextResponse.json(cachedData);
+    }
+
     // Optimized query with select only necessary columns and better indexing hint
     let query = supabase
       .from(tableName)
@@ -246,7 +261,7 @@ export async function GET(request: NextRequest) {
     const totalItems = count ?? (data?.length ?? 0);
     const currentPage = Math.floor(from / pageSize) + 1;
 
-    return NextResponse.json({
+    const responseData = {
       success: true,
       employees: data || [],
       tableName,
@@ -256,7 +271,12 @@ export async function GET(request: NextRequest) {
         totalItems,
         chunkSize: pageSize,
       },
-    });
+    };
+
+    // Set cache
+    dbCache.set(cacheKey, responseData, CACHE_DURATION);
+
+    return NextResponse.json(responseData);
   } catch (error) {
     console.error("Error in employees API:", error);
     return NextResponse.json(

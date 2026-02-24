@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { SimulatedDashboard } from "./simulated-dashboard";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
     Command,
@@ -368,9 +369,11 @@ export default function DashboardOverview({
         }
     };
 
+
+
     // Loading state
     if (isLoading && !overviewData) {
-        return <DashboardSkeleton />;
+        return <SimulatedDashboard />;
     }
 
     // Error state
