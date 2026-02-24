@@ -1,11 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase';
 import { getRegisteredFormIds } from '@/lib/compliance-form-registry';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+import { dbCache } from '@/lib/database-cache';
+import { withMetrics } from '@/lib/api-metrics';
 
 const COMPLIANCE_ACT_IDS = [
   'shop_establishment',
@@ -57,35 +54,40 @@ export interface ComplianceDashboardData {
   submissions: ComplianceSubmissionRow[];
 }
 
-export async function GET() {
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+export const GET = withMetrics('/api/compliance/dashboard', async () => {
   try {
+    // Check cache
+    const cacheKey = 'compliance_dashboard';
+    const cached = dbCache.get<ComplianceDashboardData>(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
+    }
+
+    const supabase = createServerSupabaseClient();
     const formIds = getRegisteredFormIds();
     const formsCount = formIds.filter((id) => id !== 'first_page').length;
 
-    let branchesCount = 0;
-    const { count: kaCount } = await supabase
-      .from('ka_branches')
-      .select('*', { count: 'exact', head: true });
-    if (kaCount != null) {
-      branchesCount = kaCount;
-    } else {
-      const { count: branchCount } = await supabase
-        .from('branches')
-        .select('*', { count: 'exact', head: true });
-      branchesCount = branchCount ?? 0;
-    }
+    // Parallelize branch count and submissions fetch
+    const [kaBranchesResult, branchesResult, submissionsResult] = await Promise.all([
+      supabase.from('ka_branches').select('*', { count: 'exact', head: true }),
+      supabase.from('branches').select('*', { count: 'exact', head: true }),
+      supabase
+        .from('compliance_submissions')
+        .select('id, state, district, branch, act, forms, submitted_at, status, company_id, created_at')
+        .order('submitted_at', { ascending: false })
+        .limit(200),
+    ]);
+
+    const branchesCount = kaBranchesResult.count ?? branchesResult.count ?? 0;
 
     let submissions: ComplianceSubmissionRow[] = [];
-    const { data: rows, error } = await supabase
-      .from('compliance_submissions')
-      .select('*')
-      .order('submitted_at', { ascending: false })
-      .limit(200);
-
-    if (!error && rows) {
-      submissions = Array.isArray(rows) ? rows : [];
+    if (!submissionsResult.error && submissionsResult.data) {
+      submissions = Array.isArray(submissionsResult.data) ? submissionsResult.data : [];
     }
 
+    // Single-pass status aggregation
     const byStatus: Record<string, number> = {};
     for (const row of submissions) {
       const s = (row.status ?? 'generated').toLowerCase();
@@ -105,6 +107,8 @@ export async function GET() {
       submissions,
     };
 
+    dbCache.set(cacheKey, payload, CACHE_TTL);
+
     return NextResponse.json(payload);
   } catch (e) {
     console.error('Compliance dashboard API error:', e);
@@ -123,4 +127,4 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+})

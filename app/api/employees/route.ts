@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSupabaseClient, createBulkOperationClient } from "@/lib/supabase";
 import { dbCache, cacheKeys, invalidateTableCache } from "@/lib/database-cache";
+import { withMetrics } from "@/lib/api-metrics";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { createGunzip, createGzip } from "zlib";
@@ -98,7 +99,7 @@ async function getCachedTableCount(supabase: any, tableName: string): Promise<nu
   }
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/employees', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const { searchParams } = new URL(request.url);
@@ -287,7 +288,7 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})
 
 interface EmployeeSubmissionData {
   ref_no?: string;
@@ -312,7 +313,7 @@ interface EmployeeSubmissionData {
   companyname?: string;
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/employees', async (request: NextRequest) => {
   try {
     const supabase = createServerSupabaseClient();
     const contentType = request.headers.get("content-type") || "";
@@ -558,4 +559,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})

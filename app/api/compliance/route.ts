@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createServerSupabaseClient } from '@/lib/supabase'
+import { dbCache, getCachedCompanyId } from '@/lib/database-cache'
+import { withMetrics } from '@/lib/api-metrics'
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-)
+const CACHE_TTL = 60 * 1000 // 1 minute
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/compliance', async (request: NextRequest) => {
   const { searchParams } = new URL(request.url)
   const company = searchParams.get('company')
 
@@ -15,44 +14,53 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data: companies } = await supabase
-      .from('companies')
-      .select('*')
-      .eq('code', company.toUpperCase())
-      .single()
+    const supabase = createServerSupabaseClient()
+    const companyData = await getCachedCompanyId(supabase, company)
 
-    if (!companies) {
+    if (!companyData) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
 
-    const { data: submissions } = await supabase
-      .from('compliance_submissions')
-      .select('*')
-      .eq('company_id', companies.id)
-      .order('created_at', { ascending: false })
+    const cacheKey = `compliance:${companyData.id}`
+    const cached = dbCache.get(cacheKey)
+    if (cached) {
+      return NextResponse.json(cached)
+    }
 
-    const { data: branches } = await supabase
-      .from('branches')
-      .select('*')
-      .eq('company_id', companies.id)
+    // Parallelize submissions and branches fetch
+    const [submissionsResult, branchesResult] = await Promise.all([
+      supabase
+        .from('compliance_submissions')
+        .select('id, state, district, branch, act, forms, status, submitted_at, created_at')
+        .eq('company_id', companyData.id)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('branches')
+        .select('id, name')
+        .eq('company_id', companyData.id),
+    ])
 
-    return NextResponse.json({
-      submissions: submissions || [],
-      branches: branches || [],
-    })
+    const result = {
+      submissions: submissionsResult.data || [],
+      branches: branchesResult.data || [],
+    }
+
+    dbCache.set(cacheKey, result, CACHE_TTL)
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Compliance API error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/compliance', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient()
     const body = await request.json()
-    
+
     // Handle new wizard format
     if (body.state && body.district && body.branch && body.act) {
-      // Generate a unique compliance ID
       const complianceId = `COMP-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
       const complianceData = {
@@ -64,10 +72,9 @@ export async function POST(request: NextRequest) {
         forms: body.forms || [],
         submitted_at: new Date().toISOString(),
         status: 'generated',
-        company_id: 1 // You might want to get this from auth
+        company_id: 1
       };
 
-      // Save to database
       const { data, error } = await supabase
         .from('compliance_submissions')
         .insert(complianceData)
@@ -75,7 +82,6 @@ export async function POST(request: NextRequest) {
 
       if (error) {
         console.error('Database error:', error);
-        // Fallback to just returning success without DB save
         return NextResponse.json({
           success: true,
           id: complianceId,
@@ -91,7 +97,7 @@ export async function POST(request: NextRequest) {
         data: data?.[0] || complianceData
       });
     }
-    
+
     // Handle existing format
     const { submissions } = body
 
@@ -109,10 +115,11 @@ export async function POST(request: NextRequest) {
     console.error('Compliance POST error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withMetrics('/api/compliance', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient()
     const body = await request.json()
     const { id, status } = body
 
@@ -131,4 +138,4 @@ export async function PATCH(request: NextRequest) {
     console.error('Compliance PATCH error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})

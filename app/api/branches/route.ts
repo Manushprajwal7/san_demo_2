@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerSupabaseClient } from "@/lib/supabase";
+import { dbCache, getCachedCompanyId } from "@/lib/database-cache";
+import { withMetrics } from '@/lib/api-metrics';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-);
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/branches', async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const company = searchParams.get("company");
 
@@ -18,27 +17,34 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { data: companies } = await supabase
-      .from("companies")
-      .select("*")
-      .eq("code", company.toUpperCase())
-      .single();
+    const supabase = createServerSupabaseClient();
+    const companyData = await getCachedCompanyId(supabase, company);
 
-    if (!companies) {
+    if (!companyData) {
       return NextResponse.json({ error: "Company not found" }, { status: 404 });
+    }
+
+    // Check cache
+    const cacheKey = `branches:${companyData.id}`;
+    const cached = dbCache.get(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
     }
 
     const { data, error } = await supabase
       .from("branches")
-      .select("*")
-      .eq("company_id", companies.id)
+      .select("id, name, location, approved_manpower, actual_manpower, total_salary")
+      .eq("company_id", companyData.id)
       .order("name", { ascending: true });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json(data || []);
+    const result = data || [];
+    dbCache.set(cacheKey, result, CACHE_TTL);
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Branches API error:", error);
     return NextResponse.json(
@@ -46,10 +52,11 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/branches', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const body = await request.json();
     const { companyId, name, location, approvedManpower } = body;
 
@@ -69,6 +76,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
+    // Invalidate branches cache
+    dbCache.delete(`branches:${companyId}`);
+
     return NextResponse.json(data);
   } catch (error) {
     console.error("Branches POST error:", error);
@@ -77,10 +87,11 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function PATCH(request: NextRequest) {
+export const PATCH = withMetrics('/api/branches', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const body = await request.json();
     const { id, ...updateData } = body;
 
@@ -102,9 +113,11 @@ export async function PATCH(request: NextRequest) {
       { status: 500 },
     );
   }
-}
-export async function DELETE(request: NextRequest) {
+});
+
+export const DELETE = withMetrics('/api/branches', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -129,4 +142,4 @@ export async function DELETE(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});

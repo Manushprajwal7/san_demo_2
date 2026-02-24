@@ -1,20 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
-);
+import { createServerSupabaseClient } from "@/lib/supabase";
+import { dbCache } from "@/lib/database-cache";
+import { withMetrics } from "@/lib/api-metrics";
 
 const TABLE_NAME = "employees";
+const DEFAULT_LIMIT = 1000;
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
-export async function GET() {
+export const GET = withMetrics('/api/employees/data', async (request: NextRequest) => {
   try {
-    // Fetch all rows - Supabase defaults to 1000, use range to get more
-    const { data, error } = await supabase
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get("page") || "1", 10);
+    const limit = Math.min(parseInt(searchParams.get("limit") || String(DEFAULT_LIMIT), 10), 5000);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    // Check cache
+    const cacheKey = `employees_data:${page}:${limit}`;
+    const cached = dbCache.get(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
+    }
+
+    const supabase = createServerSupabaseClient();
+
+    const { data, count, error } = await supabase
       .from(TABLE_NAME)
       .select("*", { count: "exact" })
-      .range(0, 99999);
+      .range(from, to)
+      .order("id", { ascending: true });
 
     if (error) {
       return NextResponse.json(
@@ -23,7 +37,19 @@ export async function GET() {
       );
     }
 
-    return NextResponse.json(data || []);
+    const result = {
+      data: data || [],
+      pagination: {
+        page,
+        limit,
+        total: count ?? 0,
+        totalPages: Math.ceil((count ?? 0) / limit),
+      },
+    };
+
+    dbCache.set(cacheKey, result, CACHE_TTL);
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Employees data GET error:", error);
     return NextResponse.json(
@@ -31,10 +57,11 @@ export async function GET() {
       { status: 500 }
     );
   }
-}
+})
 
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/employees/data', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const body = await request.json();
     const { rows } = body;
 
@@ -62,6 +89,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Invalidate cache after insert
+    const stats = dbCache.getStats();
+    stats.keys
+      .filter(key => key.startsWith("employees_data:"))
+      .forEach(key => dbCache.delete(key));
+
     return NextResponse.json({
       inserted: data?.length ?? rows.length,
       failed: 0,
@@ -73,4 +106,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})

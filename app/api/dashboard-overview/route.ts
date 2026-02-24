@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { unstable_cache } from "next/cache";
-import { httpRequestDuration, httpRequestsTotal } from "@/lib/prometheus";
+import { withMetrics } from "@/lib/api-metrics";
 
 // Initialize Supabase Client (outside handler to share connection if possible, strictly for service role here)
 const supabase = createClient(
@@ -452,9 +452,7 @@ const getCachedDashboardData = unstable_cache(
   { revalidate: 60, tags: ["dashboard"] }, // Revalidate every 60 seconds
 );
 
-export async function GET(request: NextRequest) {
-  const end = httpRequestDuration.startTimer({ method: 'GET', route: '/api/dashboard-overview' });
-  httpRequestsTotal.inc({ method: 'GET', route: '/api/dashboard-overview', status_code: '200' }); // Optimistic increment or move to end
+export const GET = withMetrics('/api/dashboard-overview', async (request: NextRequest) => {
   try {
     const { searchParams } = new URL(request.url);
 
@@ -465,14 +463,9 @@ export async function GET(request: NextRequest) {
     // Call cached function
     const data = await getCachedDashboardData(stateFilter, branchFilter);
 
-    // End timer
-    end({ status_code: '200' });
-
     return NextResponse.json(data);
   } catch (error) {
     console.error("Dashboard overview API error:", error);
-    end({ status_code: '500' });
-    httpRequestsTotal.inc({ method: 'GET', route: '/api/dashboard-overview', status_code: '500' }); // Correct for error
     return NextResponse.json(
       {
         error: "Internal server error",
@@ -481,4 +474,4 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});

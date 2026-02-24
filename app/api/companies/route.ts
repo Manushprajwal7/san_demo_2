@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createServerSupabaseClient } from "@/lib/supabase";
+import { dbCache } from "@/lib/database-cache";
+import { withMetrics } from '@/lib/api-metrics';
 
-// Helper to get a service role client dynamically
-function getServiceSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY || "",
-    {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    }
-  );
-}
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes (companies rarely change)
 
-export async function GET(request: NextRequest) {
-  const supabase = getServiceSupabase();
+export const GET = withMetrics('/api/companies', async (request: NextRequest) => {
+  const supabase = createServerSupabaseClient();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code");
 
   try {
     if (code) {
+      const cacheKey = `company_detail:${code.toUpperCase()}`;
+      const cached = dbCache.get(cacheKey);
+      if (cached) {
+        return NextResponse.json(cached);
+      }
+
       const { data, error } = await supabase
         .from("companies")
         .select("*")
@@ -32,16 +28,26 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 400 });
       }
 
+      dbCache.set(cacheKey, data, CACHE_TTL);
       return NextResponse.json(data);
     }
 
-    const { data, error } = await supabase.from("companies").select("*");
+    const cacheKey = "companies_list";
+    const cached = dbCache.get(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
+    }
+
+    const { data, error } = await supabase.from("companies").select("id, name, code");
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 
-    return NextResponse.json(data || []);
+    const result = data || [];
+    dbCache.set(cacheKey, result, CACHE_TTL);
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Companies API error:", error);
     return NextResponse.json(
@@ -49,10 +55,10 @@ export async function GET(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});
 
-export async function POST(request: NextRequest) {
-  const supabase = getServiceSupabase();
+export const POST = withMetrics('/api/companies', async (request: NextRequest) => {
+  const supabase = createServerSupabaseClient();
   try {
     const body = await request.json();
     const { name, code } = body;
@@ -66,12 +72,11 @@ export async function POST(request: NextRequest) {
       .select();
 
     if (error) {
-       // Debugging: check if key is actually present
-       if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-           console.error("Missing SUPABASE_SERVICE_ROLE_KEY in POST /api/companies");
-       }
-       return NextResponse.json({ error: error.message }, { status: 400 });
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
+
+    // Invalidate companies cache
+    dbCache.delete("companies_list");
 
     return NextResponse.json(data);
   } catch (error) {
@@ -81,4 +86,4 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
-}
+});

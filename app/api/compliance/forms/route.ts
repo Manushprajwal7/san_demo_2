@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createServerSupabaseClient } from '@/lib/supabase';
+import { withMetrics } from '@/lib/api-metrics';
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
-
-export async function POST(request: NextRequest) {
+export const POST = withMetrics('/api/compliance/forms', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const body = await request.json();
     const { complianceId, formData, act } = body;
 
@@ -18,7 +15,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save form data to database
     const formDataEntry = {
       compliance_id: complianceId,
       act: act,
@@ -36,7 +32,6 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('Database error:', error);
-      // Fallback - just return success without DB save
       return NextResponse.json({
         success: true,
         message: 'Form data saved successfully',
@@ -49,7 +44,6 @@ export async function POST(request: NextRequest) {
       message: 'Form data saved successfully',
       data: data?.[0] || formDataEntry
     });
-
   } catch (error) {
     console.error('Form save error:', error);
     return NextResponse.json(
@@ -57,10 +51,11 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})
 
-export async function GET(request: NextRequest) {
+export const GET = withMetrics('/api/compliance/forms', async (request: NextRequest) => {
   try {
+    const supabase = createServerSupabaseClient();
     const { searchParams } = new URL(request.url);
     const complianceId = searchParams.get('complianceId');
 
@@ -71,14 +66,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Get form data from database
     const { data, error } = await supabase
       .from('compliance_form_data')
       .select('*')
       .eq('compliance_id', complianceId)
       .single();
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 is "not found"
+    if (error && error.code !== 'PGRST116') {
       console.error('Database error:', error);
       return NextResponse.json(
         { error: 'Database error' },
@@ -90,7 +84,6 @@ export async function GET(request: NextRequest) {
       success: true,
       data: data || null
     });
-
   } catch (error) {
     console.error('Form fetch error:', error);
     return NextResponse.json(
@@ -98,4 +91,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+})
